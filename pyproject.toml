@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "persona-audit"
+version = "0.1.0"
+description = "Reproducible behavioral-state extraction for post-training audits"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+inference = [
+  "huggingface-hub>=0.30",
+  "transformers>=4.48",
+  "vllm>=0.12",
+]
+
+[project.scripts]
+persona-audit = "persona_audit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
