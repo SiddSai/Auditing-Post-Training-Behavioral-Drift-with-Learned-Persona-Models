@@ -1,0 +1,47 @@
+node_id	repo_id	revision	commit_sha	phase	stage_step	tokens_seen	protocol	selection_tier
+base-s1-003000	allenai/Olmo-3-1025-7B	stage1-step3000	9de48909b402a200848e5cba488dbfd04b6227a3	base_stage1	3000	12582912000	base_completion	primary
+base-s1-005000	allenai/Olmo-3-1025-7B	stage1-step5000	825e84ed82eb78b1b395d0aa0164378f64544f92	base_stage1	5000	20971520000	base_completion	primary
+base-s1-007000	allenai/Olmo-3-1025-7B	stage1-step7000	d49f152cc52e0d5e112fdb132e0926e2b7b371b9	base_stage1	7000	29360128000	base_completion	primary
+base-s1-010000	allenai/Olmo-3-1025-7B	stage1-step10000	7717822de388435b332d8c4a7ab7d88412fff939	base_stage1	10000	41943040000	base_completion	primary
+base-s1-015000	allenai/Olmo-3-1025-7B	stage1-step15000	2cf4ae8261a322e52edcb4215e48ed5567acb5e4	base_stage1	15000	62914560000	base_completion	primary
+base-s1-020000	allenai/Olmo-3-1025-7B	stage1-step20000	04eeee4fa74f9f3d2cb11c31e155545dad32365e	base_stage1	20000	83886080000	base_completion	primary
+base-s1-030000	allenai/Olmo-3-1025-7B	stage1-step30000	00e74b79574a450ca6bef62de91821f37c3664c3	base_stage1	30000	125829120000	base_completion	primary
+base-s1-050000	allenai/Olmo-3-1025-7B	stage1-step50000	08e6c7dffd31378d66ebf8075a7a1a5f3243ad0b	base_stage1	50000	209715200000	base_completion	primary
+base-s1-075000	allenai/Olmo-3-1025-7B	stage1-step75000	e56fe4d5fbff424e0bae04d80418a68f57160fbf	base_stage1	75000	314572800000	base_completion	primary
+base-s1-099000	allenai/Olmo-3-1025-7B	stage1-step99000	e043b579d8164f7b2fed714ca40b034908896d66	base_stage1	99000	415236096000	base_completion	primary
+base-s1-150000	allenai/Olmo-3-1025-7B	stage1-step150000	d4240ae137bb57426468d975eba8825c656ea044	base_stage1	150000	629145600000	base_completion	primary
+base-s1-225000	allenai/Olmo-3-1025-7B	stage1-step225000	c60088d952266deffa99f636b2036040f5f96eb9	base_stage1	225000	943718400000	base_completion	primary
+base-s1-297000	allenai/Olmo-3-1025-7B	stage1-step297000	f822d62a59efa33ff6fa91e1092064ebbb27772e	base_stage1	297000	1245708288000	base_completion	primary
+base-s1-400000	allenai/Olmo-3-1025-7B	stage1-step400000	666f5ee8019485462263afd10c5de9cab0376476	base_stage1	400000	1677721600000	base_completion	primary
+base-s1-550000	allenai/Olmo-3-1025-7B	stage1-step550000	36693174da2933f1576f4f95bb06f758cae8beaa	base_stage1	550000	2306867200000	base_completion	primary
+base-s1-707000	allenai/Olmo-3-1025-7B	stage1-step707000	d1f1ebe50fc8f0b8c5533d0643aea3cb50ea4196	base_stage1	707000	2965372928000	base_completion	primary
+base-s1-850000	allenai/Olmo-3-1025-7B	stage1-step850000	56551a78f35bfe1b91c0144519c9155eac07c511	base_stage1	850000	3565158400000	base_completion	primary
+base-s1-1000000	allenai/Olmo-3-1025-7B	stage1-step1000000	cb286dcdaaf3f92b3c419dd77439078fdebffe53	base_stage1	1000000	4194304000000	base_completion	primary
+base-s1-1150000	allenai/Olmo-3-1025-7B	stage1-step1150000	efb255fd0729ee22a3e9818b58bc745ad0ef46d2	base_stage1	1150000	4823449600000	base_completion	primary
+base-s1-1250000	allenai/Olmo-3-1025-7B	stage1-step1250000	2f116590fce1fafaf1e6fccebd99a6fb44c77de4	base_stage1	1250000	5242880000000	base_completion	primary
+base-s1-1350000	allenai/Olmo-3-1025-7B	stage1-step1350000	04c027030bf0fa73537e67c3f2244bf7bf50dd38	base_stage1	1350000	5662310400000	base_completion	primary
+base-s1-1413814	allenai/Olmo-3-1025-7B	stage1-step1413814	373bad25002f1624757a73235c5ca844c6375c25	base_stage1	1413814	5929965715456	base_completion	primary
+base-s2-001000	allenai/Olmo-3-1025-7B	stage2-step1000	2079c9080d94a23d90601169ab4d44c44797fe8f	base_stage2	1000	5929965715456	base_completion	primary
+base-s2-003000	allenai/Olmo-3-1025-7B	stage2-step3000	690e5145c272999ac0dd53041833e4001dccd65b	base_stage2	3000	5934160019456	base_completion	primary
+base-s2-005000	allenai/Olmo-3-1025-7B	stage2-step5000	8aed247ea5eadd0152d7c247df4f8fea8afda6ce	base_stage2	5000	5938354323456	base_completion	primary
+base-s2-007000	allenai/Olmo-3-1025-7B	stage2-step7000	90e363054e786b82bc6fbd35be6dff7c2ff3ab7b	base_stage2	7000	5942548627456	base_completion	primary
+base-s2-010000	allenai/Olmo-3-1025-7B	stage2-step10000	b574fbb87aaf99dbdd4bd039321fbec3f4962b18	base_stage2	10000	5948840083456	base_completion	primary
+base-s2-015000	allenai/Olmo-3-1025-7B	stage2-step15000	863083fc16fb1f20dbbf20aa871fef7c76c3b2b4	base_stage2	15000	5959325843456	base_completion	primary
+base-s2-022000	allenai/Olmo-3-1025-7B	stage2-step22000	629f209f7e4fdd71f5626e00c85aaf6e317ffc15	base_stage2	22000	5974005907456	base_completion	primary
+base-s2-033000	allenai/Olmo-3-1025-7B	stage2-step33000	342966c798025cc7ff5311769c0041374f58ea3c	base_stage2	33000	5997074579456	base_completion	primary
+base-s2-047684	allenai/Olmo-3-1025-7B	stage2-step47684	c3c800dc900f3fecc112e8cd6b2a13edabc096e1	base_stage2	47684	6027869159424	base_completion	primary
+base-s3-001000	allenai/Olmo-3-1025-7B	stage3-step1000	446ae231fa094d6e0c04aefc9893d2a4799183ff	base_stage3	1000	6027869159424	base_completion	primary
+base-s3-002000	allenai/Olmo-3-1025-7B	stage3-step2000	1726466e706751679ec52e2e4435b127253294f3	base_stage3	2000	6032063463424	base_completion	primary
+base-s3-003000	allenai/Olmo-3-1025-7B	stage3-step3000	3f4bed688110a9657da3e5b37e2a1f6a68e2a5e8	base_stage3	3000	6036257767424	base_completion	primary
+base-s3-005000	allenai/Olmo-3-1025-7B	stage3-step5000	5d197129c751f91ecfc2322d63182392fc82e63c	base_stage3	5000	6044646375424	base_completion	primary
+base-s3-007000	allenai/Olmo-3-1025-7B	stage3-step7000	0898d103ced1ddccb2718bd5e1f93e89cd6d5071	base_stage3	7000	6053034983424	base_completion	primary
+base-s3-009000	allenai/Olmo-3-1025-7B	stage3-step9000	71e1f72d1d110bad7c362e0136886ca18210aaf2	base_stage3	9000	6061423591424	base_completion	primary
+base-s3-011000	allenai/Olmo-3-1025-7B	stage3-step11000	950230fc0dc47bbb50d28dcc5398eb7187fd7f63	base_stage3	11000	6069812199424	base_completion	primary
+base-s3-011921	allenai/Olmo-3-1025-7B	stage3-step11921	4b32e100e6d94c5903b9680b6662c45089c534e4	base_stage3	11921	6073675153408	base_completion	primary
+base-main	allenai/Olmo-3-1025-7B	main	a81bae42db3975be1671e27b9c9a56da1a9f980f	base_release			base_completion	primary
+instruct-sft	allenai/Olmo-3-7B-Instruct-SFT	main	e1452fc572d51966ff4aaeb25118b891eb93e549	posttrain_instruct_sft			chat	primary
+instruct-dpo	allenai/Olmo-3-7B-Instruct-DPO	main	b33130b7de49f0c2553b5c2b3bc8409ff3e627d1	posttrain_instruct_dpo			chat	primary
+instruct-rlvr	allenai/Olmo-3-7B-Instruct	main	6e5971d9eba42665f5bd5a0fcf047f299ce1dccc	posttrain_instruct_rlvr			chat	primary
+think-sft	allenai/Olmo-3-7B-Think-SFT	main	6ff857587e040d6d523a3d5f3a56e918f5401d66	posttrain_think_sft			chat_thinking	primary
+think-dpo	allenai/Olmo-3-7B-Think-DPO	main	7b18bf927b430ff06376fdfa5610eb3b1b6a5c38	posttrain_think_dpo			chat_thinking	primary
+think-rlvr	allenai/Olmo-3-7B-Think	main	d97e442d7cc678210054dbcc9b440894d62c89a4	posttrain_think_rlvr			chat_thinking	primary
