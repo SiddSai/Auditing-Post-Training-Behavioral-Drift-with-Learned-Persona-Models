@@ -8,6 +8,7 @@ from .anchors import stratified_sample
 from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
 from .manifests import load_anchors, load_nodes, load_wild_nodes
+from .preflight import validate_tokenizer_candidates
 from .sources import (
     ANTHROPIC_EVALS_PERSONA_REVISION,
     import_anthropic_persona,
@@ -59,6 +60,12 @@ def main(argv: list[str] | None = None) -> None:
     anthropic_import.add_argument("--provenance-output")
     anthropic_import.add_argument("--min-label-confidence", type=float)
 
+    tokenizer = sub.add_parser("validate-tokenizer")
+    tokenizer.add_argument("--model-repo", required=True)
+    tokenizer.add_argument("--model-revision", required=True)
+    tokenizer.add_argument("--anchors", required=True)
+    tokenizer.add_argument("--output", required=True)
+
     def inference_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--nodes", required=True)
         command.add_argument("--wild-nodes", help="Optional admitted observational descendants manifest")
@@ -103,6 +110,8 @@ def main(argv: list[str] | None = None) -> None:
             args.source_dir, args.source_revision, args.output, args.provenance_output,
             args.min_label_confidence,
         )
+    elif args.command == "validate-tokenizer":
+        validate_tokenizer_candidates(args.model_repo, args.model_revision, args.anchors, args.output)
     elif args.command == "run-node":
         selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
         if selected is None:

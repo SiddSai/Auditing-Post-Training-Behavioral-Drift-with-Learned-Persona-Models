@@ -6,6 +6,23 @@ trajectory from a later, heterogeneous intervention panel.
 
 ## Running the pipeline
 
+### VM quickstart
+
+After cloning the repository and activating a fresh Python 3.10–3.12 conda
+environment, run these commands from the repository root:
+
+```bash
+bash scripts/01_install.sh
+bash scripts/02_prepare_anchors.sh
+bash scripts/03_preflight.sh
+bash scripts/04_pilot.sh
+```
+
+`04_pilot.sh` is deliberately a three-model smoke test, not the expensive full
+panel. Inspect its `runs/pilot_v1/*.metadata.json` artifacts before launching
+the 58-node sweep. The target-domain/rubric predictor is the next research
+module and is not represented by these GPU commands yet.
+
 Install the package with inference dependencies on the GPU machine:
 
 ```bash
