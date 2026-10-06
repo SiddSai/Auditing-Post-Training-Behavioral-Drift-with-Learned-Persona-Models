@@ -21,6 +21,7 @@ from .target_inference import collect_target_observations, run_target_node, run_
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
+from .predictor import prepare_predictor_outcomes, run_predictor_experiment
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -181,6 +182,25 @@ def main(argv: list[str] | None = None) -> None:
     truthful_score.add_argument("--model", required=True)
     truthful_score.add_argument("--requests-per-minute", type=int, default=10)
 
+    prepare_outcomes = sub.add_parser("prepare-predictor-outcomes")
+    prepare_outcomes.add_argument("--targets", required=True)
+    prepare_outcomes.add_argument("--ifeval", required=True)
+    prepare_outcomes.add_argument("--xstest", required=True)
+    prepare_outcomes.add_argument("--do-not-answer", required=True)
+    prepare_outcomes.add_argument("--sycophancy")
+    prepare_outcomes.add_argument("--output", required=True)
+    predictor = sub.add_parser("run-predictor")
+    predictor.add_argument("--anchor-observations", required=True)
+    predictor.add_argument("--anchors", required=True)
+    predictor.add_argument("--targets", required=True)
+    predictor.add_argument("--outcomes", required=True)
+    predictor.add_argument("--nodes", required=True)
+    predictor.add_argument("--wild-nodes", required=True)
+    predictor.add_argument("--output-dir", required=True)
+    predictor.add_argument("--state-dimensions", type=int, default=8)
+    predictor.add_argument("--prompt-dimensions", type=int, default=32)
+    predictor.add_argument("--c", type=float, default=0.2)
+
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
     state.add_argument("--anchors", required=True)
@@ -258,6 +278,13 @@ def main(argv: list[str] | None = None) -> None:
         run_openai_judge(args.requests, args.output, args.model, args.max_tokens, args.workers, args.max_retries)
     elif args.command == "score-truthfulqa-gemini":
         score_truthfulqa_gemini(args.requests, args.source_root, args.output, args.model, args.requests_per_minute)
+    elif args.command == "prepare-predictor-outcomes":
+        prepare_predictor_outcomes(args.targets, args.output, args.ifeval, args.xstest, args.do_not_answer, args.sycophancy)
+    elif args.command == "run-predictor":
+        run_predictor_experiment(
+            args.anchor_observations, args.anchors, args.targets, args.outcomes, args.nodes,
+            args.wild_nodes, args.output_dir, args.state_dimensions, args.prompt_dimensions, args.c,
+        )
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

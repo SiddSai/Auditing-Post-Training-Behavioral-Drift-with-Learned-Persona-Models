@@ -97,6 +97,14 @@ evaluation prompts per dataset, then generates raw greedy completions. See
 published scoring procedure supports and why judge-required metrics are kept
 separate rather than replaced with ad hoc heuristics.
 
+### First behavioral predictor
+
+After collecting the target scores, run `bash scripts/14_run_first_predictor.sh`.
+It uses only the frozen development prompts for fitting and disjoint evaluation
+prompts for measurement, re-fits anchor PCA inside every model holdout, and
+writes prompt-only, state-only, additive, and state-by-prompt results. See
+[the first-predictor protocol](docs/FIRST_PREDICTOR.md).
+
 The implementation deliberately uses vLLM's offline `LLM.generate` API rather
 than chat completion APIs: that API does not apply a chat template
 automatically. Candidate answers are scored as requested next-token log

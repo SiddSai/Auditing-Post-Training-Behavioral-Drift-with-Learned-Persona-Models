@@ -15,6 +15,7 @@ from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
 from persona_audit.targets import freeze_target_splits, score_xstest_strmatch
 from persona_audit.benchmark_scoring import apply_judge_responses, write_native_inputs
+from persona_audit.predictor import prepare_predictor_outcomes, run_predictor_experiment
 
 
 class PipelineTests(unittest.TestCase):
@@ -178,6 +179,36 @@ class PipelineTests(unittest.TestCase):
             output = root / "dna_scores.jsonl"
             apply_judge_responses(request_dir / "do_not_answer_gpt4_requests.jsonl", judge_responses, "do_not_answer", output)
             self.assertEqual(json.loads(output.read_text())["outcome"], 6)
+
+    def test_predictor_refits_state_inside_model_holdouts(self) -> None:
+        """An end-to-end tiny panel catches accidental all-panel state fitting."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            anchors = root / "anchors.jsonl"
+            atomic_jsonl(anchors, [{"anchor_id": f"a{i}", "prompt_raw": f"anchor {i}", "candidates": [" Yes", " No"], "behavior_consistent_candidate": " Yes", "family": "f", "source": "test", "source_revision": "1"} for i in range(4)])
+            nodes, wild = root / "nodes.tsv", root / "wild.tsv"
+            official = [f"base-{i:02d}" for i in range(40)] + [f"post-{i}" for i in range(6)]
+            nodes.write_text("node_id\trepo_id\trevision\tcommit_sha\tphase\tprotocol\n" + "".join(f"{node}\tpublisher/{node}\tmain\t{'a' * 40}\t{'base_stage1' if node.startswith('base') else 'posttrain'}\traw_prompt\n" for node in official))
+            wild_ids = [f"wild-{i}" for i in range(12)]
+            wild.write_text("candidate_id\tcommit_sha\tintervention_family\tpanel\tdecision\n" + "".join(f"publisher/{node}\t{'b' * 40}\tintervention\twild_observational\tadmit_not_causal\n" for node in wild_ids))
+            all_nodes = official + [f"wild--publisher--{node}" for node in wild_ids]
+            obs = root / "anchor_obs.jsonl"
+            atomic_jsonl(obs, [{"node_id": node, "anchor_id": f"a{i}", "behavior_logit_margin": ((n * 37 + i * 17) % 101) / 100} for n, node in enumerate(all_nodes) for i in range(4)])
+            targets = root / "targets.jsonl"
+            target_rows = [{"target_id": f"ifeval.d{i}", "family": "ifeval", "split": "development", "prompt_raw": f"development topic{i} instruction guide"} for i in range(4)] + [{"target_id": f"ifeval.e{i}", "family": "ifeval", "split": "evaluation", "prompt_raw": f"evaluation topic{i} instruction guide"} for i in range(2)]
+            atomic_jsonl(targets, target_rows)
+            score = root / "ifeval.jsonl"
+            atomic_jsonl(score, [{"node_id": node, "target_id": target["target_id"], "family": "ifeval", "strict_follow_all": bool((n + int(target["target_id"][-1])) % 2)} for n, node in enumerate(all_nodes) for target in target_rows])
+            xstest, dna = root / "xstest.jsonl", root / "dna.jsonl"
+            xstest.write_text(""); dna.write_text("")
+            prepared = root / "outcomes.jsonl"
+            prepare_predictor_outcomes(targets, prepared, score, xstest, dna)
+            output = root / "predictor"
+            run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, output, state_dimensions=2, prompt_dimensions=2)
+            self.assertTrue((output / "metrics.csv").exists())
+            self.assertTrue((output / "predictions.jsonl").exists())
+            metadata = json.loads((output / "metadata.json").read_text())
+            self.assertEqual(len(metadata["splits"]["official_to_wild"]["train_nodes"]), 46)
 
 
 if __name__ == "__main__":
