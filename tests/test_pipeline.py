@@ -188,7 +188,7 @@ class PipelineTests(unittest.TestCase):
             atomic_jsonl(anchors, [{"anchor_id": f"a{i}", "prompt_raw": f"anchor {i}", "candidates": [" Yes", " No"], "behavior_consistent_candidate": " Yes", "family": "f", "source": "test", "source_revision": "1"} for i in range(4)])
             nodes, wild = root / "nodes.tsv", root / "wild.tsv"
             official = [f"base-{i:02d}" for i in range(40)] + [f"post-{i}" for i in range(6)]
-            nodes.write_text("node_id\trepo_id\trevision\tcommit_sha\tphase\tprotocol\n" + "".join(f"{node}\tpublisher/{node}\tmain\t{'a' * 40}\t{'base_stage1' if node.startswith('base') else 'posttrain'}\traw_prompt\n" for node in official))
+            nodes.write_text("node_id\trepo_id\trevision\tcommit_sha\tphase\tprotocol\n" + "".join(f"{node}\tpublisher/{node}\tmain\t{'a' * 40}\t{'base_stage1' if node.startswith('base') else 'posttrain_instruct'}\traw_prompt\n" for node in official))
             wild_ids = [f"wild-{i}" for i in range(12)]
             wild.write_text("candidate_id\tcommit_sha\tintervention_family\tpanel\tdecision\n" + "".join(f"publisher/{node}\t{'b' * 40}\tintervention\twild_observational\tadmit_not_causal\n" for node in wild_ids))
             all_nodes = official + [f"wild--publisher--{node}" for node in wild_ids]
@@ -213,6 +213,10 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((audit / "model_level_metrics.csv").exists())
             metadata = json.loads((output / "metadata.json").read_text())
             self.assertEqual(len(metadata["splits"]["official_to_wild"]["train_nodes"]), 46)
+            native_output = root / "native_predictor"
+            run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, native_output, state_dimensions=2, prompt_dimensions=2, analysis_panel="native_posttrain")
+            native_metadata = json.loads((native_output / "metadata.json").read_text())
+            self.assertEqual(len(native_metadata["splits"]["official_posttrain_to_wild"]["train_nodes"]), 6)
 
 
 if __name__ == "__main__":

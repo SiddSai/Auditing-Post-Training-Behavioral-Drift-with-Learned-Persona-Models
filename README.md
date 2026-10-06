@@ -105,6 +105,11 @@ prompts for measurement, re-fits anchor PCA inside every model holdout, and
 writes prompt-only, state-only, additive, and state-by-prompt results. See
 [the first-predictor protocol](docs/FIRST_PREDICTOR.md).
 
+The original raw-completion panel is not a valid deployed-assistant protocol
+for every post-trained checkpoint. See the [interface-validity audit](docs/INTERFACE_VALIDITY_AUDIT.md)
+and run `bash scripts/16_run_native_posttrain_predictor.sh` for the primary
+native-template post-training sensitivity panel.
+
 The implementation deliberately uses vLLM's offline `LLM.generate` API rather
 than chat completion APIs: that API does not apply a chat template
 automatically. Candidate answers are scored as requested next-token log

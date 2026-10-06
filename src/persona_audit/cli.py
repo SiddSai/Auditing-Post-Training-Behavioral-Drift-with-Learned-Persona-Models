@@ -201,6 +201,7 @@ def main(argv: list[str] | None = None) -> None:
     predictor.add_argument("--prompt-dimensions", type=int, default=32)
     predictor.add_argument("--c", type=float, default=0.2)
     predictor.add_argument("--state-method", choices=["pca", "factor"], default="pca")
+    predictor.add_argument("--analysis-panel", choices=["all", "native_posttrain"], default="all")
     audit_predictor = sub.add_parser("audit-predictor")
     audit_predictor.add_argument("--predictions", required=True)
     audit_predictor.add_argument("--state-geometry", required=True)
@@ -290,6 +291,7 @@ def main(argv: list[str] | None = None) -> None:
             args.anchor_observations, args.anchors, args.targets, args.outcomes, args.nodes,
             args.wild_nodes, args.output_dir, args.state_dimensions, args.prompt_dimensions, args.c,
             args.state_method,
+            args.analysis_panel,
         )
     elif args.command == "audit-predictor":
         audit_predictor_results(args.predictions, args.state_geometry, args.output_dir)

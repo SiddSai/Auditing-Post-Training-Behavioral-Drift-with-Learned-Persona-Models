@@ -219,9 +219,16 @@ def _nodes(nodes_path: str | Path, wild_nodes_path: str | Path) -> tuple[list[Mo
     return [*official, *wild], base, [node.node_id for node in wild]
 
 
-def _splits(nodes_path: str | Path, wild_nodes_path: str | Path) -> dict[str, tuple[list[str], list[str]]]:
+def _splits(nodes_path: str | Path, wild_nodes_path: str | Path, analysis_panel: str = "all") -> dict[str, tuple[list[str], list[str]]]:
     all_nodes, base, wild = _nodes(nodes_path, wild_nodes_path)
     official = [node.node_id for node in all_nodes if node.node_id not in set(wild)]
+    if analysis_panel == "native_posttrain":
+        posttrained = [node.node_id for node in all_nodes if node.phase.startswith("posttrain_")]
+        if len(posttrained) < 2:
+            raise ManifestError("native_posttrain panel requires at least two official post-training nodes")
+        return {"official_posttrain_to_wild": (posttrained, wild)}
+    if analysis_panel != "all":
+        raise ManifestError("analysis_panel must be 'all' or 'native_posttrain'")
     # Nodes are already in the published chronological manifest order.  The
     # tail split tests forward generalization rather than a random checkpoint
     # holdout, which would overstate performance on a dense trajectory.
@@ -244,6 +251,7 @@ def run_predictor_experiment(
     prompt_dimensions: int = 32,
     c: float = 0.2,
     state_method: str = "pca",
+    analysis_panel: str = "all",
 ) -> None:
     """Run pre-specified model/prompt holdouts and write row-level predictions."""
     if state_dimensions < 1 or prompt_dimensions < 1 or c <= 0:
@@ -261,7 +269,7 @@ def run_predictor_experiment(
     metrics: list[dict[str, Any]] = []
     geometry_rows: list[dict[str, Any]] = []
     variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
-    split_specs = _splits(nodes, wild_nodes)
+    split_specs = _splits(nodes, wild_nodes, analysis_panel)
     metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids)
     for split_name, (train_nodes, test_nodes) in split_specs.items():
         states, geometry = _states_for_fold(anchor_observations, anchors, train_nodes, all_node_ids, state_dimensions, state_method)
@@ -312,7 +320,7 @@ def run_predictor_experiment(
         "anchor_observations_sha256": file_sha256(anchor_observations), "anchors_sha256": file_sha256(anchors),
         "targets_sha256": file_sha256(targets), "outcomes_sha256": file_sha256(outcomes),
         "nodes_sha256": file_sha256(nodes), "wild_nodes_sha256": file_sha256(wild_nodes),
-        "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
+        "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
         "splits": {name: {"train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
         "variants": list(variants), "outcome_protocols": OUTCOME_PROTOCOLS,
         "interpretation": "This is concurrent held-out behavioral prediction, not a future-state forecast.",
