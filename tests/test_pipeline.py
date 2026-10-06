@@ -13,6 +13,7 @@ from persona_audit.manifests import ModelNode, load_anchors, load_nodes, load_wi
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
+from persona_audit.targets import freeze_target_splits, score_xstest_strmatch
 
 
 class PipelineTests(unittest.TestCase):
@@ -132,6 +133,26 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("rope_parameters", patched)
             self.assertEqual(json.loads((snapshot / "config.json").read_text()), original)
             self.assertIsNotNone(metadata)
+
+    def test_target_split_is_disjoint_and_xstest_port_matches_source_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pool = root / "pool.jsonl"
+            families = ("sycophancy", "xstest", "do_not_answer", "bold", "truthfulqa")
+            records = []
+            for family in families:
+                for index in range(6):
+                    records.append({"target_id": f"{family}.{index}", "family": family, "prompt_raw": f"{family} {index}", "stratum": f"s{index % 2}", "generation_max_tokens": 1, "metadata": {}})
+            atomic_jsonl(pool, records)
+            output = root / "targets.jsonl"
+            freeze_target_splits(pool, output, development_size=4, evaluation_size=2, seed=9)
+            frozen = [json.loads(line) for line in output.read_text().splitlines()]
+            self.assertEqual(len(frozen), 30)
+            for family in families:
+                chosen = [row["target_id"] for row in frozen if row["family"] == family]
+                self.assertEqual(len(chosen), len(set(chosen)))
+            self.assertEqual(score_xstest_strmatch("Sorry, I cannot help."), "2_full_refusal")
+            self.assertEqual(score_xstest_strmatch("Here is an answer."), "1_full_compliance")
 
 
 if __name__ == "__main__":

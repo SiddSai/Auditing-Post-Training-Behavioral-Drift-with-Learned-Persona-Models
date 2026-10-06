@@ -17,6 +17,8 @@ from .sources import (
     snapshot_hf,
 )
 from .state import fit_state
+from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
+from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -49,6 +51,25 @@ def main(argv: list[str] | None = None) -> None:
     snapshot.add_argument("--revision", required=True)
     snapshot.add_argument("--output", required=True)
     snapshot.add_argument("--repo-type", choices=["dataset", "model"], default="dataset")
+
+    git_snapshot = sub.add_parser("snapshot-git")
+    git_snapshot.add_argument("--repository", required=True)
+    git_snapshot.add_argument("--revision", required=True)
+    git_snapshot.add_argument("--output", required=True)
+
+    import_targets = sub.add_parser("import-target-pools")
+    import_targets.add_argument("--source-root", required=True)
+    import_targets.add_argument("--output", required=True)
+    freeze_targets = sub.add_parser("freeze-target-splits")
+    freeze_targets.add_argument("--pool", required=True)
+    freeze_targets.add_argument("--output", required=True)
+    freeze_targets.add_argument("--development-size", type=int, default=300)
+    freeze_targets.add_argument("--evaluation-size", type=int, default=150)
+    freeze_targets.add_argument("--seed", type=int, default=20261005)
+    audit_targets = sub.add_parser("audit-target-anchor-disjointness")
+    audit_targets.add_argument("--targets", required=True)
+    audit_targets.add_argument("--anchors", required=True)
+    audit_targets.add_argument("--output", required=True)
 
     anthropic_snapshot = sub.add_parser("snapshot-anthropic-persona")
     anthropic_snapshot.add_argument("--output-dir", required=True)
@@ -89,9 +110,32 @@ def main(argv: list[str] | None = None) -> None:
     worker = sub.add_parser("anchor-worker")
     inference_args(worker)
 
+    def target_inference_args(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--nodes", required=True)
+        command.add_argument("--wild-nodes")
+        command.add_argument("--targets", required=True)
+        command.add_argument("--output-dir", required=True)
+        command.add_argument("--cache-dir", required=True)
+        command.add_argument("--dtype", default="bfloat16")
+        command.add_argument("--gpu-memory-utilization", type=float, default=0.88)
+        command.add_argument("--max-model-len", type=int)
+        command.add_argument("--batch-size", type=int, default=128)
+
+    target_worker = sub.add_parser("target-worker")
+    target_inference_args(target_worker)
+    target_node = sub.add_parser("run-target-node")
+    target_inference_args(target_node)
+    target_node.add_argument("--node-id", required=True)
+
     collect = sub.add_parser("collect-observations")
     collect.add_argument("--run-dir", required=True)
     collect.add_argument("--output", required=True)
+    collect_targets = sub.add_parser("collect-target-observations")
+    collect_targets.add_argument("--run-dir", required=True)
+    collect_targets.add_argument("--output", required=True)
+    score_targets = sub.add_parser("score-target-observations")
+    score_targets.add_argument("--observations", required=True)
+    score_targets.add_argument("--output", required=True)
 
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
@@ -110,6 +154,15 @@ def main(argv: list[str] | None = None) -> None:
         stratified_sample(args.input, args.output, args.size, args.seed)
     elif args.command == "snapshot-hf":
         print(snapshot_hf(args.repo_id, args.revision, args.output, args.repo_type))
+    elif args.command == "snapshot-git":
+        from .sources import snapshot_git
+        print(snapshot_git(args.repository, args.revision, args.output))
+    elif args.command == "import-target-pools":
+        import_target_pools(args.source_root, args.output)
+    elif args.command == "freeze-target-splits":
+        freeze_target_splits(args.pool, args.output, args.development_size, args.evaluation_size, args.seed)
+    elif args.command == "audit-target-anchor-disjointness":
+        audit_target_anchor_disjointness(args.targets, args.anchors, args.output)
     elif args.command == "snapshot-anthropic-persona":
         print(snapshot_anthropic_persona(args.output_dir, args.revision))
     elif args.command == "import-anthropic-persona":
@@ -131,8 +184,19 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif args.command == "anchor-worker":
         run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes)
+    elif args.command == "target-worker":
+        run_target_worker(args.nodes, args.targets, args.output_dir, args.cache_dir, _config(args), args.wild_nodes)
+    elif args.command == "run-target-node":
+        selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
+        if selected is None:
+            parser.error(f"Unknown node_id: {args.node_id}")
+        run_target_node(selected, load_targets(args.targets), args.output_dir, args.cache_dir, _config(args), file_sha256(args.targets))
     elif args.command == "collect-observations":
         collect_observations(args.run_dir, args.output)
+    elif args.command == "collect-target-observations":
+        collect_target_observations(args.run_dir, args.output)
+    elif args.command == "score-target-observations":
+        score_target_observations(args.observations, args.output)
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

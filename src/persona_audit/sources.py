@@ -18,6 +18,36 @@ ANTHROPIC_EVALS_REPO = "https://github.com/anthropics/evals.git"
 ANTHROPIC_EVALS_PERSONA_REVISION = "84fcc677e52e1902d696c32cd1a6b663e70d3993"
 
 
+def snapshot_git(repository: str, revision: str, output_dir: str | Path) -> Path:
+    """Create a complete, immutable Git snapshot at a verified full SHA."""
+    if not SHA.fullmatch(revision):
+        raise ManifestError("Git source revision must be a full 40-character SHA")
+    target = Path(output_dir)
+    if target.exists() and any(target.iterdir()):
+        provenance = target / "SOURCE_PROVENANCE.json"
+        if provenance.exists():
+            recorded = json.loads(provenance.read_text(encoding="utf-8"))
+            if recorded.get("repository") == repository and recorded.get("resolved_revision") == revision:
+                return target
+        raise ManifestError(f"Refusing to overwrite non-empty source snapshot directory: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix="git-source-", dir=target.parent))
+    checkout = workspace / "checkout"
+    try:
+        subprocess.run(["git", "clone", "--filter=blob:none", "--no-checkout", repository, str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "checkout", revision], check=True)
+        resolved = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        if resolved != revision:
+            raise ManifestError(f"Git source resolved {resolved}, not requested {revision}")
+        if target.exists():
+            target.rmdir()
+        os.replace(checkout, target)
+        atomic_json(target / "SOURCE_PROVENANCE.json", {"repository": repository, "requested_revision": revision, "resolved_revision": resolved, "snapshot_kind": "git_checkout"})
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+    return target
+
+
 def snapshot_hf(repo_id: str, revision: str, output_dir: str | Path, repo_type: str = "dataset", allow_patterns: list[str] | None = None) -> Path:
     """Download a Hub snapshot at an immutable revision and write provenance."""
     try:

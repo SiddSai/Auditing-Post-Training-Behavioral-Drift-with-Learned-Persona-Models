@@ -78,6 +78,25 @@ persona-audit fit-state --observations runs/anchors/v1/observations.jsonl \
 See [the architecture](docs/ARCHITECTURE.md) for the data contracts and
 leakage controls.
 
+### Next: frozen single-turn target panel
+
+After the anchor sweep and `z_m` artifacts are present, build and run the
+separate target panel:
+
+```bash
+bash scripts/06_prepare_targets.sh
+bash scripts/07_run_targets_4xh100.sh
+# Once all 58 nodes have metadata:
+bash scripts/08_collect_and_score_targets.sh
+```
+
+This fetches the five source-pinned target datasets (SycophancyEval, XSTest,
+Do-Not-Answer, BOLD, and TruthfulQA), freezes 300 development plus 150 held-out
+evaluation prompts per dataset, then generates raw greedy completions. See
+[the target-panel protocol](docs/TARGET_PANEL.md) for what each source's
+published scoring procedure supports and why judge-required metrics are kept
+separate rather than replaced with ad hoc heuristics.
+
 The implementation deliberately uses vLLM's offline `LLM.generate` API rather
 than chat completion APIs: that API does not apply a chat template
 automatically. Candidate answers are scored as requested next-token log

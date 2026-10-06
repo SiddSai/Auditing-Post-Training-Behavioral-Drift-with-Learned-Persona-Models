@@ -74,7 +74,8 @@ src/persona_audit/
   inference.py     resumable one-checkpoint-per-GPU vLLM workers
   io.py            atomic writes and content hashes
   state.py         response matrix construction, scaling, PCA/factors, z_m export
-  targets/         target protocol runners and rubric-ready observation schemas
+  targets.py       source-pinned target-pool import, frozen splits, audit, scoring adapters
+  target_inference.py raw greedy-completion workers for frozen targets
   predictors/      chronology, capability, PCA, bilinear, and delta baselines
   evaluation/      node/domain splits, calibration, bootstrap intervals, reports
   cli.py           command-line entry point
@@ -137,10 +138,15 @@ state_run/
 ### Target observation
 
 ```text
-node_id, target_id, target_family, history_raw, prompt_raw,
-protocol_id, response_raw, outcome_type, outcome_value,
-judge_id, decode_config_sha
+node_id, target_id, family, split, completion, finish_reason,
+completion_token_ids, generation_max_tokens, protocol
 ```
+
+The canonical target manifest independently retains the raw source prompt,
+source repository/SHA/file, source taxonomy, generation cap, and released
+reference material. A completion and its source-native score are separate
+artifacts: an absent score must mean that a judge-backed benchmark has not yet
+been run, never that it was approximated with a hidden heuristic.
 
 ## vLLM worker model
 
