@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import InferenceError
+from .interfaces import load_interfaces, render_prompts
 from .inference import EngineConfig, _compatibility_overlay, _download_node, claim_node
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import ModelNode, load_nodes, load_wild_nodes
@@ -27,7 +28,7 @@ def load_targets(path: str | Path) -> list[dict[str, Any]]:
     return values
 
 
-def _generate(llm: Any, node: ModelNode, targets: list[dict[str, Any]], config: EngineConfig) -> list[dict[str, Any]]:
+def _generate(llm: Any, node: ModelNode, targets: list[dict[str, Any]], config: EngineConfig, interface: dict[str, Any] | None) -> list[dict[str, Any]]:
     from vllm import SamplingParams
     groups: dict[int, list[dict[str, Any]]] = {}
     for target in targets:
@@ -35,9 +36,10 @@ def _generate(llm: Any, node: ModelNode, targets: list[dict[str, Any]], config: 
     rows: list[dict[str, Any]] = []
     for max_tokens, group in sorted(groups.items()):
         params = SamplingParams(temperature=0.0, max_tokens=max_tokens)
+        prompts = render_prompts(llm.get_tokenizer(), group, interface) if interface else [target["prompt_raw"] for target in group]
         for start in range(0, len(group), config.batch_size):
             batch = group[start:start + config.batch_size]
-            outputs = llm.generate([target["prompt_raw"] for target in batch], params, use_tqdm=False)
+            outputs = llm.generate(prompts[start:start + config.batch_size], params, use_tqdm=False)
             for target, output in zip(batch, outputs, strict=True):
                 choice = output.outputs[0]
                 rows.append({
@@ -45,16 +47,16 @@ def _generate(llm: Any, node: ModelNode, targets: list[dict[str, Any]], config: 
                     "target_id": target["target_id"], "family": target["family"], "split": target["split"],
                     "completion": choice.text, "finish_reason": choice.finish_reason,
                     "completion_token_ids": list(choice.token_ids), "generation_max_tokens": max_tokens,
-                    "protocol": "raw_source_prompt_greedy_no_chat_template_or_system_message",
+                    "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_source_prompt_greedy_no_chat_template_or_system_message"),
                 })
     return rows
 
 
-def _done(metadata: Path, node: ModelNode, target_hash: str, config: EngineConfig) -> bool:
+def _done(metadata: Path, node: ModelNode, target_hash: str, config: EngineConfig, interface_hash: str | None) -> bool:
     if not metadata.exists():
         return False
     value = json.loads(metadata.read_text(encoding="utf-8"))
-    expected = {"node": asdict(node), "engine": asdict(config), "target_manifest_sha256": target_hash}
+    expected = {"node": asdict(node), "engine": asdict(config), "target_manifest_sha256": target_hash, "interface_manifest_sha256": interface_hash}
     if not all(value.get(key) == item for key, item in expected.items()):
         raise InferenceError(f"Existing target result differs from current inputs: {metadata}")
     observations = metadata.parent.parent / "observations" / f"{node.node_id}.jsonl"
@@ -63,7 +65,7 @@ def _done(metadata: Path, node: ModelNode, target_hash: str, config: EngineConfi
     raise InferenceError(f"Corrupt/incomplete target result: {metadata}")
 
 
-def run_target_node(node: ModelNode, targets: list[dict[str, Any]], output_dir: str | Path, cache_dir: str | Path, config: EngineConfig, target_hash: str) -> Path:
+def run_target_node(node: ModelNode, targets: list[dict[str, Any]], output_dir: str | Path, cache_dir: str | Path, config: EngineConfig, target_hash: str, interface: dict[str, Any] | None = None, interface_hash: str | None = None) -> Path:
     try:
         from vllm import LLM
     except ImportError as exc:
@@ -77,28 +79,34 @@ def run_target_node(node: ModelNode, targets: list[dict[str, Any]], output_dir: 
         kwargs["max_model_len"] = config.max_model_len
     llm = LLM(**kwargs)
     try:
-        rows = _generate(llm, node, targets, config)
+        rows = _generate(llm, node, targets, config, interface)
     finally:
         del llm
     atomic_jsonl(path, rows)
-    atomic_json(root / "metadata" / f"{node.node_id}.json", {"node": asdict(node), "engine": asdict(config), "target_manifest_sha256": target_hash, "target_count": len(targets), "observation_sha256": file_sha256(path), "compatibility_overlay": compatibility, "completed_unix": time.time()})
+    atomic_json(root / "metadata" / f"{node.node_id}.json", {"node": asdict(node), "engine": asdict(config), "target_manifest_sha256": target_hash, "interface_manifest_sha256": interface_hash, "interface": interface, "target_count": len(targets), "observation_sha256": file_sha256(path), "compatibility_overlay": compatibility, "completed_unix": time.time()})
     return path
 
 
-def run_target_worker(nodes_path: str | Path, targets_path: str | Path, output_dir: str | Path, cache_dir: str | Path, config: EngineConfig, wild_nodes_path: str | Path | None = None) -> None:
+def run_target_worker(nodes_path: str | Path, targets_path: str | Path, output_dir: str | Path, cache_dir: str | Path, config: EngineConfig, wild_nodes_path: str | Path | None = None, interfaces_path: str | Path | None = None, interface_renderings: set[str] | None = None) -> None:
     nodes = load_nodes(nodes_path)
     if wild_nodes_path:
         nodes.extend(load_wild_nodes(wild_nodes_path))
     targets, root, target_hash = load_targets(targets_path), Path(output_dir), file_sha256(targets_path)
+    interfaces = load_interfaces(interfaces_path, nodes) if interfaces_path else None
+    interface_hash = file_sha256(interfaces_path) if interfaces_path else None
+    if interface_renderings is not None:
+        if interfaces is None:
+            raise InferenceError("--interface-renderings requires an interface manifest")
+        nodes = [node for node in nodes if interfaces[node.node_id]["rendering"] in interface_renderings]
     for node in nodes:
         metadata = root / "metadata" / f"{node.node_id}.json"
-        if _done(metadata, node, target_hash, config):
+        if _done(metadata, node, target_hash, config, interface_hash):
             continue
         # Separate claim namespace prevents an anchor and target worker collision.
         claim_root = root / "target-claims"
         if not claim_node(claim_root, node.node_id):
             continue
-        run_target_node(node, targets, root, cache_dir, config, target_hash)
+        run_target_node(node, targets, root, cache_dir, config, target_hash, interfaces[node.node_id] if interfaces else None, interface_hash)
 
 
 def collect_target_observations(run_dir: str | Path, output: str | Path) -> None:

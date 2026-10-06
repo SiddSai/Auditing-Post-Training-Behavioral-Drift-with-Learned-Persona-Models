@@ -20,6 +20,7 @@ from .state import fit_state
 from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
+from .interfaces import build_native_interface_manifest, load_interfaces
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -121,12 +122,18 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--gpu-memory-utilization", type=float, default=0.88)
         command.add_argument("--max-model-len", type=int)
         command.add_argument("--batch-size", type=int, default=128)
+        command.add_argument("--interfaces", help="Pinned per-node rendering manifest; omit for raw prompts")
+        command.add_argument("--interface-renderings", nargs="+", choices=["raw_completion", "native_chat_template"], help="Restrict an interface-manifest run to selected rendering policies")
 
     target_worker = sub.add_parser("target-worker")
     target_inference_args(target_worker)
     target_node = sub.add_parser("run-target-node")
     target_inference_args(target_node)
     target_node.add_argument("--node-id", required=True)
+    interfaces = sub.add_parser("audit-native-interfaces")
+    interfaces.add_argument("--nodes", required=True)
+    interfaces.add_argument("--wild-nodes", required=True)
+    interfaces.add_argument("--output", required=True)
 
     collect = sub.add_parser("collect-observations")
     collect.add_argument("--run-dir", required=True)
@@ -206,6 +213,8 @@ def main(argv: list[str] | None = None) -> None:
         validate_tokenizer_candidates(args.model_repo, args.model_revision, args.anchors, args.output)
     elif args.command == "write-panel-splits":
         write_panel_splits(args.nodes, args.output_dir, args.wild_nodes)
+    elif args.command == "audit-native-interfaces":
+        build_native_interface_manifest(args.nodes, args.wild_nodes, args.output)
     elif args.command == "run-node":
         selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
         if selected is None:
@@ -217,12 +226,13 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "anchor-worker":
         run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes)
     elif args.command == "target-worker":
-        run_target_worker(args.nodes, args.targets, args.output_dir, args.cache_dir, _config(args), args.wild_nodes)
+        run_target_worker(args.nodes, args.targets, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None)
     elif args.command == "run-target-node":
         selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
         if selected is None:
             parser.error(f"Unknown node_id: {args.node_id}")
-        run_target_node(selected, load_targets(args.targets), args.output_dir, args.cache_dir, _config(args), file_sha256(args.targets))
+        interface = load_interfaces(args.interfaces, load_nodes(args.nodes) + (load_wild_nodes(args.wild_nodes) if args.wild_nodes else []))[selected.node_id] if args.interfaces else None
+        run_target_node(selected, load_targets(args.targets), args.output_dir, args.cache_dir, _config(args), file_sha256(args.targets), interface, file_sha256(args.interfaces) if args.interfaces else None)
     elif args.command == "collect-observations":
         collect_observations(args.run_dir, args.output)
     elif args.command == "collect-target-observations":
