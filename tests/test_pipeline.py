@@ -217,6 +217,12 @@ class PipelineTests(unittest.TestCase):
             run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, native_output, state_dimensions=2, prompt_dimensions=2, analysis_panel="native_posttrain")
             native_metadata = json.loads((native_output / "metadata.json").read_text())
             self.assertEqual(len(native_metadata["splits"]["official_posttrain_to_wild"]["train_nodes"]), 6)
+            primary_output = root / "native_primary_predictor"
+            run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, primary_output, state_dimensions=2, prompt_dimensions=2, analysis_panel="native_all_prompt_holdout")
+            primary_metadata = json.loads((primary_output / "metadata.json").read_text())
+            primary_split = primary_metadata["splits"]["all_native_models_prompt_holdout"]
+            self.assertEqual(len(primary_split["train_nodes"]), 18)
+            self.assertEqual(primary_split["train_nodes"], primary_split["test_nodes"])
 
 
 if __name__ == "__main__":

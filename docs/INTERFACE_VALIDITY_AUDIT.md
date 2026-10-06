@@ -67,12 +67,31 @@ in this study. It must not be filled with an ad hoc correctness heuristic.
 
 ## Predictor design
 
+### Primary: prompt-held-out prediction across all 18 native models
+
+`scripts/17_run_native_primary_predictor.sh` is the primary analysis. It fits
+the unsupervised anchor representation on all 18 interface-valid models (six
+official post-training endpoints and twelve admitted descendants), then trains
+behavior predictors on the 300 frozen development prompts per family and
+evaluates on the separate 150 frozen evaluation prompts for each of those same
+18 models. Thus the held-out unit is the prompt, not the model. No target
+outcome is used to fit `z_m`; all target prompt partitions are frozen before
+generation. The primary comparison is whether prompt plus state improves on
+prompt-only on unseen prompts.
+
+This is the direct concurrent-prediction question: given an already-measured
+model state and a new prompt, predict its behavior. It is not a claim of
+unseen-model transfer or future forecasting.
+
+### Secondary: external model transfer
+
 `scripts/16_run_native_posttrain_predictor.sh` uses only the six official
 post-training endpoints to standardize and fit the anchor state, then projects
 the twelve wild descendants. It runs PCA and factor-analysis states at 2D and
 4D. The small state-fit set makes this an external stress test and sensitivity
 analysis, not a high-powered final estimate. We will expand the matched
-post-training panel before using it as a main headline result.
+post-training panel before using it as a main headline result. It remains a
+useful stress test, but is not the main result.
 
 ## References
 

@@ -2,9 +2,9 @@
 
 The prediction unit is a model--target pair.  A model is represented only by
 its fixed anchor responses.  For every model split we fit the scaler and PCA
-*only* on the training models, then predict source-native target outcomes on
-held-out prompts and/or models.  This is deliberately distinct from the
-descriptive all-panel PCA saved in ``runs/state``.
+only on models available for that analysis, then predict source-native target
+outcomes on held-out prompts and/or models.  This is deliberately distinct
+from the descriptive all-panel PCA saved in ``runs/state``.
 """
 from __future__ import annotations
 
@@ -227,8 +227,17 @@ def _splits(nodes_path: str | Path, wild_nodes_path: str | Path, analysis_panel:
         if len(posttrained) < 2:
             raise ManifestError("native_posttrain panel requires at least two official post-training nodes")
         return {"official_posttrain_to_wild": (posttrained, wild)}
+    if analysis_panel == "native_all_prompt_holdout":
+        # The 18 interface-valid models are all available before target
+        # scoring: six official post-training endpoints and twelve separately
+        # published OLMo-Instruct descendants.  Their target prompts, not the
+        # models, are the held-out units in the primary analysis.
+        native_models = [node.node_id for node in all_nodes if node.phase.startswith("posttrain_")] + wild
+        if len(native_models) < 2:
+            raise ManifestError("native_all_prompt_holdout requires at least two interface-valid post-training nodes")
+        return {"all_native_models_prompt_holdout": (native_models, native_models)}
     if analysis_panel != "all":
-        raise ManifestError("analysis_panel must be 'all' or 'native_posttrain'")
+        raise ManifestError("analysis_panel must be 'all', 'native_posttrain', or 'native_all_prompt_holdout'")
     # Nodes are already in the published chronological manifest order.  The
     # tail split tests forward generalization rather than a random checkpoint
     # holdout, which would overstate performance on a dense trajectory.
@@ -316,7 +325,7 @@ def run_predictor_experiment(
         fields = list(metrics[0])
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(metrics)
     atomic_json(destination / "metadata.json", {
-        "design": "Train on development prompts only; evaluate on disjoint evaluation prompts only. PCA/scaling of anchors are refit in each training-model fold.",
+        "design": "Train on development prompts only; evaluate on disjoint evaluation prompts only. PCA/scaling of anchors are fit only on the models available to each analysis; target labels never enter state fitting.",
         "anchor_observations_sha256": file_sha256(anchor_observations), "anchors_sha256": file_sha256(anchors),
         "targets_sha256": file_sha256(targets), "outcomes_sha256": file_sha256(outcomes),
         "nodes_sha256": file_sha256(nodes), "wild_nodes_sha256": file_sha256(wild_nodes),

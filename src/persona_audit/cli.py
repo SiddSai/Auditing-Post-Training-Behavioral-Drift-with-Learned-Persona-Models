@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> None:
     predictor.add_argument("--prompt-dimensions", type=int, default=32)
     predictor.add_argument("--c", type=float, default=0.2)
     predictor.add_argument("--state-method", choices=["pca", "factor"], default="pca")
-    predictor.add_argument("--analysis-panel", choices=["all", "native_posttrain"], default="all")
+    predictor.add_argument("--analysis-panel", choices=["all", "native_posttrain", "native_all_prompt_holdout"], default="all")
     audit_predictor = sub.add_parser("audit-predictor")
     audit_predictor.add_argument("--predictions", required=True)
     audit_predictor.add_argument("--state-geometry", required=True)

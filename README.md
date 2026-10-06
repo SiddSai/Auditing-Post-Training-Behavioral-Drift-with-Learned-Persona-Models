@@ -107,8 +107,10 @@ writes prompt-only, state-only, additive, and state-by-prompt results. See
 
 The original raw-completion panel is not a valid deployed-assistant protocol
 for every post-trained checkpoint. See the [interface-validity audit](docs/INTERFACE_VALIDITY_AUDIT.md)
-and run `bash scripts/16_run_native_posttrain_predictor.sh` for the primary
-native-template post-training sensitivity panel.
+and run `bash scripts/17_run_native_primary_predictor.sh` for the primary
+native-template, prompt-held-out analysis across all 18 interface-valid
+post-trained models. `scripts/16_run_native_posttrain_predictor.sh` is the
+separate six-official-to-twelve-wild external-transfer stress test.
 
 The implementation deliberately uses vLLM's offline `LLM.generate` API rather
 than chat completion APIs: that API does not apply a chat template
