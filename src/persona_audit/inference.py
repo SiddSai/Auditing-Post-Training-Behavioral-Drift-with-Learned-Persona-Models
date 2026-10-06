@@ -4,6 +4,9 @@ import math
 import os
 import time
 import json
+import shutil
+import tempfile
+import hashlib
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -28,6 +31,69 @@ def _download_node(node: ModelNode, cache_dir: str | Path) -> str:
     except ImportError as exc:
         raise RuntimeError("Install persona-audit[inference] to download checkpoints") from exc
     return snapshot_download(repo_id=node.repo_id, revision=node.commit_sha, cache_dir=str(cache_dir))
+
+
+def _compatibility_overlay(node: ModelNode, snapshot_path: str | Path, cache_dir: str | Path) -> tuple[str, dict[str, Any] | None]:
+    """Adapt the known legacy Unsloth RoPE config without mutating the pinned snapshot.
+
+    Some wild OLMo descendants serialize a flat ``rope_parameters`` object.
+    Current Transformers expects the official OLMo layout: ``rope_scaling``
+    plus a top-level ``rope_theta``. We make a symlink overlay with only a
+    patched config.json, preserve all original weight files, and record both
+    config hashes in the run artifact.
+    """
+    source = Path(snapshot_path)
+    config_path = source / "config.json"
+    try:
+        config_bytes = config_path.read_bytes()
+        config = json.loads(config_bytes)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InferenceError(f"Cannot read checkpoint config: {config_path}") from exc
+    rope_parameters = config.get("rope_parameters")
+    if not isinstance(rope_parameters, dict) or not any(isinstance(value, (int, float)) for value in rope_parameters.values()):
+        return str(source), None
+    if node.phase.startswith("base_") or node.phase.startswith("posttrain_"):
+        raise InferenceError(f"Unexpected legacy RoPE config on official node {node.node_id}")
+    rope_theta = rope_parameters.get("rope_theta")
+    if not isinstance(rope_theta, (int, float)):
+        raise InferenceError(f"Legacy RoPE config lacks numeric rope_theta: {node.node_id}")
+    rope_scaling = {key: value for key, value in rope_parameters.items() if key != "rope_theta"}
+    if not rope_scaling.get("rope_type"):
+        raise InferenceError(f"Legacy RoPE config lacks rope_type: {node.node_id}")
+    patched = dict(config)
+    patched.pop("rope_parameters", None)
+    patched["rope_theta"] = rope_theta
+    patched["rope_scaling"] = rope_scaling
+    overlay = Path(cache_dir) / "persona-audit-compat" / node.node_id / node.commit_sha
+    marker = overlay / "PERSONA_AUDIT_COMPATIBILITY.json"
+    if not overlay.exists():
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=f".{node.node_id}-", dir=overlay.parent))
+        try:
+            for entry in source.iterdir():
+                destination = temporary / entry.name
+                if entry.name == "config.json":
+                    continue
+                os.symlink(entry, destination, target_is_directory=entry.is_dir())
+            (temporary / "config.json").write_text(json.dumps(patched, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            atomic_json(temporary / "PERSONA_AUDIT_COMPATIBILITY.json", {
+                "kind": "legacy_flat_rope_parameters_to_rope_scaling",
+                "source_config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+                "patched_config_sha256": hashlib.sha256((temporary / "config.json").read_bytes()).hexdigest(),
+                "source_snapshot": str(source),
+            })
+            try:
+                os.replace(temporary, overlay)
+            except FileExistsError:
+                # Another worker completed this deterministic overlay first.
+                pass
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+    try:
+        compatibility = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InferenceError(f"Invalid compatibility overlay for {node.node_id}: {overlay}") from exc
+    return str(overlay), compatibility
 
 
 def _candidate_ids(tokenizer: Any, anchor: Anchor) -> tuple[int, ...]:
@@ -113,7 +179,8 @@ def run_node(
     root = Path(output_dir)
     observations = root / "observations" / f"{node.node_id}.jsonl"
     metadata = root / "metadata" / f"{node.node_id}.json"
-    model_path = _download_node(node, cache_dir)
+    snapshot_path = _download_node(node, cache_dir)
+    model_path, compatibility = _compatibility_overlay(node, snapshot_path, cache_dir)
     kwargs: dict[str, Any] = {"model": model_path, "tokenizer": model_path, "dtype": config.dtype, "gpu_memory_utilization": config.gpu_memory_utilization}
     if config.max_model_len is not None:
         kwargs["max_model_len"] = config.max_model_len
@@ -126,6 +193,7 @@ def run_node(
     atomic_json(metadata, {
         "node": asdict(node), "engine": asdict(config), "observation_sha256": file_sha256(observations),
         "anchor_count": len(anchors), "anchor_manifest_sha256": anchor_manifest_sha256,
+        "compatibility_overlay": compatibility,
         "completed_unix": time.time(),
     })
     return observations

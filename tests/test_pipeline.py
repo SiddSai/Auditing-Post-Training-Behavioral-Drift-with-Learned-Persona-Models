@@ -7,9 +7,9 @@ from pathlib import Path
 
 from persona_audit.anchors import stratified_sample
 from persona_audit.errors import ManifestError
-from persona_audit.inference import collect_observations
+from persona_audit.inference import _compatibility_overlay, collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
-from persona_audit.manifests import load_anchors, load_nodes, load_wild_nodes
+from persona_audit.manifests import ModelNode, load_anchors, load_nodes, load_wild_nodes
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
@@ -111,6 +111,26 @@ class PipelineTests(unittest.TestCase):
             write_panel_splits(root / "manifests/nodes.tsv", output, root / "manifests/wild_candidates.tsv")
             self.assertEqual(len(json.loads((output / "all_panel_nodes.json").read_text())), 58)
             self.assertEqual(len(json.loads((output / "base_trajectory_nodes.json").read_text())), 40)
+
+    def test_legacy_rope_config_uses_non_mutating_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            original = {
+                "model_type": "olmo3",
+                "rope_parameters": {"rope_type": "yarn", "rope_theta": 500000, "factor": 8.0},
+            }
+            (snapshot / "config.json").write_text(json.dumps(original))
+            (snapshot / "weights.safetensors").write_text("placeholder")
+            node = ModelNode("wild--test", "publisher/test", "main", "a" * 40, "wild_test", "raw_prompt")
+            path, metadata = _compatibility_overlay(node, snapshot, root / "cache")
+            patched = json.loads((Path(path) / "config.json").read_text())
+            self.assertEqual(patched["rope_theta"], 500000)
+            self.assertEqual(patched["rope_scaling"]["rope_type"], "yarn")
+            self.assertNotIn("rope_parameters", patched)
+            self.assertEqual(json.loads((snapshot / "config.json").read_text()), original)
+            self.assertIsNotNone(metadata)
 
 
 if __name__ == "__main__":
