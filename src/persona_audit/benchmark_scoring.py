@@ -12,7 +12,10 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -160,11 +163,13 @@ def apply_judge_responses(requests: str | Path, responses: str | Path, family: s
     raw `judge_response`; this prevents accidental positional misalignment.
     """
     request_index = {(row["node_id"], row["target_id"]): row for row in read_jsonl(requests)}
-    rows = []
+    rows_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for response in read_jsonl(responses):
         key = (response.get("node_id"), response.get("target_id"))
         if key not in request_index or not isinstance(response.get("judge_response"), str):
             raise InferenceError(f"Invalid/misaligned judge response: {key}")
+        if key in rows_by_key:
+            raise InferenceError(f"Duplicate judge response: {key}")
         raw = response["judge_response"]
         base = {"node_id": key[0], "target_id": key[1], "family": family, "judge_response": raw}
         if family == "sycophancy":
@@ -173,11 +178,17 @@ def apply_judge_responses(requests: str | Path, responses: str | Path, family: s
             base.update({"outcome": _parse_dna(raw), "protocol": "source gpt.py parse_labels <answer>index</answer> parser"})
         else:
             raise InferenceError("apply-judge-responses supports sycophancy or do_not_answer")
-        rows.append(base)
-    atomic_jsonl(output, rows)
+        rows_by_key[key] = base
+    missing = set(request_index) - set(rows_by_key)
+    if missing:
+        raise InferenceError(f"Judge response file is incomplete: {len(missing)} request(s) missing")
+    atomic_jsonl(output, [rows_by_key[key] for key in sorted(rows_by_key)])
 
 
-def run_openai_judge(requests: str | Path, output: str | Path, model: str, max_tokens: int = 256) -> None:
+def run_openai_judge(
+    requests: str | Path, output: str | Path, model: str, max_tokens: int = 256,
+    workers: int = 8, max_retries: int = 8,
+) -> None:
     """Run a released request template through an explicitly named modern judge.
 
     This is a protocol adaptation for retired GPT-4 endpoints, not a claim to
@@ -191,20 +202,48 @@ def run_openai_judge(requests: str | Path, output: str | Path, model: str, max_t
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY must be set before running an OpenAI judge")
     existing = {(row["node_id"], row["target_id"]): row for row in read_jsonl(output)} if Path(output).exists() else {}
-    client = OpenAI()
+    if workers < 1 or max_retries < 0:
+        raise InferenceError("workers must be >= 1 and max_retries must be >= 0")
+    thread_local = threading.local()
+
+    def judge_one(request: dict[str, Any]) -> dict[str, Any]:
+        if not hasattr(thread_local, "client"):
+            thread_local.client = OpenAI()
+        for attempt in range(max_retries + 1):
+            try:
+                response = thread_local.client.chat.completions.create(
+                    model=model, messages=request["messages"], temperature=0, max_tokens=max_tokens,
+                )
+                return {
+                    "node_id": request["node_id"], "target_id": request["target_id"],
+                    "judge_response": response.choices[0].message.content or "", "judge_model": model,
+                    "protocol": "source_template_port_modern_openai_judge",
+                }
+            except Exception:
+                if attempt >= max_retries:
+                    raise
+                time.sleep(min(30.0, 0.5 * (2 ** attempt)))
+        raise AssertionError("unreachable")
+
+    pending = [
+        request for request in read_jsonl(requests)
+        if (request["node_id"], request["target_id"]) not in existing
+    ]
     newly_scored = 0
-    for request in read_jsonl(requests):
-        key = (request["node_id"], request["target_id"])
-        if key in existing:
-            continue
-        response = client.chat.completions.create(model=model, messages=request["messages"], temperature=0, max_tokens=max_tokens)
-        content = response.choices[0].message.content or ""
-        existing[key] = {"node_id": key[0], "target_id": key[1], "judge_response": content, "judge_model": model, "protocol": "source_template_port_modern_openai_judge"}
-        newly_scored += 1
-        # Bounded redo on interruption, rather than rewriting an O(n) JSONL
-        # file after each of tens of thousands of API calls.
-        if newly_scored % 25 == 0:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(judge_one, request) for request in pending]
+        try:
+            for future in as_completed(futures):
+                row = future.result()
+                existing[(row["node_id"], row["target_id"])] = row
+                newly_scored += 1
+                if newly_scored % 25 == 0:
+                    atomic_jsonl(output, [existing[item] for item in sorted(existing)])
+        except Exception:
             atomic_jsonl(output, [existing[item] for item in sorted(existing)])
+            for future in futures:
+                future.cancel()
+            raise
     if newly_scored:
         atomic_jsonl(output, [existing[item] for item in sorted(existing)])
 

@@ -160,6 +160,8 @@ def main(argv: list[str] | None = None) -> None:
     openai_judge.add_argument("--output", required=True)
     openai_judge.add_argument("--model", required=True)
     openai_judge.add_argument("--max-tokens", type=int, default=256)
+    openai_judge.add_argument("--workers", type=int, default=8)
+    openai_judge.add_argument("--max-retries", type=int, default=8)
     truthful_score = sub.add_parser("score-truthfulqa-gemini")
     truthful_score.add_argument("--requests", required=True)
     truthful_score.add_argument("--source-root", required=True)
@@ -236,7 +238,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "apply-judge-responses":
         apply_judge_responses(args.requests, args.responses, args.family, args.output)
     elif args.command == "run-openai-judge":
-        run_openai_judge(args.requests, args.output, args.model, args.max_tokens)
+        run_openai_judge(args.requests, args.output, args.model, args.max_tokens, args.workers, args.max_retries)
     elif args.command == "score-truthfulqa-gemini":
         score_truthfulqa_gemini(args.requests, args.source_root, args.output, args.model, args.requests_per_minute)
     elif args.command == "fit-state":

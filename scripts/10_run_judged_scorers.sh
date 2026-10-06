@@ -10,9 +10,9 @@ echo "  $out/do_not_answer_gpt4_requests.jsonl"
 echo "  $out/truthfulqa_gemini_requests.jsonl"
 echo
 echo 'Run a declared modern OpenAI judge over the *released source templates*, then apply the released parsers:'
-echo "persona-audit run-openai-judge --requests $out/sycophancy_gpt4_requests.jsonl --model YOUR_MODEL --output $out/sycophancy_judge_responses.jsonl"
+echo "persona-audit run-openai-judge --requests $out/sycophancy_gpt4_requests.jsonl --model YOUR_MODEL --workers 8 --output $out/sycophancy_judge_responses.jsonl"
 echo "persona-audit apply-judge-responses --family sycophancy --requests $out/sycophancy_gpt4_requests.jsonl --responses $out/sycophancy_judge_responses.jsonl --output $out/sycophancy_scores.jsonl"
-echo "persona-audit run-openai-judge --requests $out/do_not_answer_gpt4_requests.jsonl --model YOUR_MODEL --output $out/do_not_answer_judge_responses.jsonl"
+echo "persona-audit run-openai-judge --requests $out/do_not_answer_gpt4_requests.jsonl --model YOUR_MODEL --workers 8 --output $out/do_not_answer_judge_responses.jsonl"
 echo "persona-audit apply-judge-responses --family do_not_answer --requests $out/do_not_answer_gpt4_requests.jsonl --responses $out/do_not_answer_judge_responses.jsonl --output $out/do_not_answer_scores.jsonl"
 echo
 echo 'For the pinned TruthfulQA repository Gemini scorer (requires GEMINI_API_KEY):'
