@@ -110,6 +110,7 @@ class PipelineTests(unittest.TestCase):
             output = Path(temp)
             write_panel_splits(root / "manifests/nodes.tsv", output, root / "manifests/wild_candidates.tsv")
             self.assertEqual(len(json.loads((output / "all_panel_nodes.json").read_text())), 58)
+            self.assertEqual(len(json.loads((output / "official_panel_nodes.json").read_text())), 46)
             self.assertEqual(len(json.loads((output / "base_trajectory_nodes.json").read_text())), 40)
 
     def test_legacy_rope_config_uses_non_mutating_overlay(self) -> None:
