@@ -21,7 +21,7 @@ from .target_inference import collect_target_observations, run_target_node, run_
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
-from .predictor import prepare_predictor_outcomes, run_predictor_experiment
+from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -200,6 +200,11 @@ def main(argv: list[str] | None = None) -> None:
     predictor.add_argument("--state-dimensions", type=int, default=8)
     predictor.add_argument("--prompt-dimensions", type=int, default=32)
     predictor.add_argument("--c", type=float, default=0.2)
+    predictor.add_argument("--state-method", choices=["pca", "factor"], default="pca")
+    audit_predictor = sub.add_parser("audit-predictor")
+    audit_predictor.add_argument("--predictions", required=True)
+    audit_predictor.add_argument("--state-geometry", required=True)
+    audit_predictor.add_argument("--output-dir", required=True)
 
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
@@ -284,7 +289,10 @@ def main(argv: list[str] | None = None) -> None:
         run_predictor_experiment(
             args.anchor_observations, args.anchors, args.targets, args.outcomes, args.nodes,
             args.wild_nodes, args.output_dir, args.state_dimensions, args.prompt_dimensions, args.c,
+            args.state_method,
         )
+    elif args.command == "audit-predictor":
+        audit_predictor_results(args.predictions, args.state_geometry, args.output_dir)
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

@@ -21,11 +21,12 @@ The raw-prompt primary panel uses source-native outcomes:
   adaptation; its released template/parser is preserved but the judge is not
   the historical GPT-4 endpoint.
 
-Each family gets four regularized logistic baselines: `prompt_only`,
-`state_only`, `additive`, and `interaction` (anchor state x TF-IDF/SVD prompt
-representation).  The primary evidence is the improvement of `interaction`
-or `additive` over `prompt_only` on AUROC, log loss, and Brier score.  Prompt
-features are fit on development-prompt text only.
+Each family gets regularized logistic baselines: `prompt_only`,
+`metadata_only`, `state_only`, prompt-plus-metadata, state-plus-metadata,
+state-plus-prompt, all-additive, and state x prompt interaction. The primary
+evidence is state's incremental value over prompt-plus-metadata on AUROC, log
+loss, and Brier score. Prompt features are fit on development-prompt text
+only.
 
 There are two fixed model holdouts: `official_to_wild` (46 official models to
 12 separately published descendants) and `base_early_to_late` (first 75% of
@@ -43,3 +44,21 @@ bash scripts/14_run_first_predictor.sh
 
 The run writes row-level held-out predictions, aggregate metrics, exact input
 hashes, and the split membership under `runs/predictor/v1/raw_primary/`.
+
+## Audit and representation sensitivity
+
+Run `bash scripts/15_audit_and_sweep_predictor.sh` after the primary result.
+It produces four further safeguards:
+
+1. A model-level table of observed versus predicted outcome rates, rank
+   correlation, and calibration error. This prevents a large number of
+   prompt-level rows from disguising a failure to discriminate checkpoints.
+2. A pre-target metadata control: base/post-training status and normalized
+   base-trajectory progress. Wild descendants receive the same terminal,
+   post-training metadata values, so this control cannot identify them by
+   membership.
+3. Fold-fitted state-space geometry with coordinate-range and Mahalanobis
+   diagnostics for each held-out model.
+4. A fixed 2/4/8/16-dimensional PCA and factor-analysis sweep. This is a
+   descriptive robustness analysis, not hyperparameter tuning; no held-out
+   metric selects a representation.

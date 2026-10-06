@@ -15,7 +15,7 @@ from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
 from persona_audit.targets import freeze_target_splits, score_xstest_strmatch
 from persona_audit.benchmark_scoring import apply_judge_responses, write_native_inputs
-from persona_audit.predictor import prepare_predictor_outcomes, run_predictor_experiment
+from persona_audit.predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment
 
 
 class PipelineTests(unittest.TestCase):
@@ -207,6 +207,10 @@ class PipelineTests(unittest.TestCase):
             run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, output, state_dimensions=2, prompt_dimensions=2)
             self.assertTrue((output / "metrics.csv").exists())
             self.assertTrue((output / "predictions.jsonl").exists())
+            self.assertTrue((output / "state_geometry.jsonl").exists())
+            audit = root / "audit"
+            audit_predictor_results(output / "predictions.jsonl", output / "state_geometry.jsonl", audit)
+            self.assertTrue((audit / "model_level_metrics.csv").exists())
             metadata = json.loads((output / "metadata.json").read_text())
             self.assertEqual(len(metadata["splits"]["official_to_wild"]["train_nodes"]), 46)
 
