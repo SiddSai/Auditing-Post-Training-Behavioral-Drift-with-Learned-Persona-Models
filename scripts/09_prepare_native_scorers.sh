@@ -12,7 +12,8 @@ mkdir -p "$out"
 # sentence tokenizer. Keep this explicit and local to the scoring protocol.
 python - <<'PY'
 import nltk
-nltk.download("punkt", quiet=True)
+for package in ("punkt", "punkt_tab"):
+    nltk.download(package, quiet=True)
 PY
 
 persona-audit write-native-scorer-inputs --observations "$obs" --targets "$targets" --output-dir "$out"
