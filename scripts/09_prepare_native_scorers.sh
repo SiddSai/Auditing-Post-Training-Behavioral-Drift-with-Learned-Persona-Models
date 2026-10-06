@@ -8,6 +8,13 @@ targets='data/targets/single_turn_v1.jsonl'
 out='runs/targets/v1/native_scorers'
 mkdir -p "$out"
 
+# The released IFEval evaluator imports NLTK and loads the Punkt English
+# sentence tokenizer. Keep this explicit and local to the scoring protocol.
+python - <<'PY'
+import nltk
+nltk.download("punkt", quiet=True)
+PY
+
 persona-audit write-native-scorer-inputs --observations "$obs" --targets "$targets" --output-dir "$out"
 persona-audit score-xstest-native --observations "$obs" --targets "$targets" --output "$out/xstest_scores.jsonl"
 
