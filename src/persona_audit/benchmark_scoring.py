@@ -119,7 +119,7 @@ def write_native_inputs(observations: str | Path, targets: str | Path, output_di
         target, obs = row["target"], row["observation"]
         ifeval.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "split": obs["split"], "prompt": target["prompt_raw"], "response": obs["completion"], "key": target["metadata"]["key"], "instruction_id_list": target["metadata"]["instruction_id_list"], "kwargs": target["metadata"]["kwargs"]})
     atomic_jsonl(root / "ifeval_responses.jsonl", ifeval)
-    atomic_json(root / "metadata.json", {"observations_sha256": file_sha256(observations), "targets_sha256": file_sha256(targets), "source_status": {"xstest": "released local scorer", "sycophancy": "released GPT-4 template", "do_not_answer": "released GPT-4 template/parser and training code; no published pretrained Longformer checkpoint", "truthfulqa": "pinned repository Gemini judge", "ifeval": "released deterministic strict/loose scorer"}})
+    atomic_json(root / "metadata.json", {"observations_sha256": file_sha256(observations), "targets_sha256": file_sha256(targets), "source_status": {"xstest": "released local scorer", "sycophancy": "released GPT-4 template", "do_not_answer": "released response-only Longformer evaluator checkpoints plus GPT-4 template/parser", "truthfulqa": "pinned repository Gemini judge", "ifeval": "released deterministic strict/loose scorer"}})
 
 
 def score_xstest_native(observations: str | Path, targets: str | Path, output: str | Path) -> None:
@@ -149,6 +149,60 @@ def score_ifeval_native(observations: str | Path, targets: str | Path, source_ro
     finally:
         if root in sys.path: sys.path.remove(root)
     atomic_jsonl(output, rows)
+
+
+DNA_ACTION_MODEL = "LibrAI/longformer-action-ro"
+DNA_ACTION_REVISION = "bb1f0a07dcb55ae0e9af5c5431ea8075f9a92c92"
+DNA_HARMFUL_MODEL = "LibrAI/longformer-harmful-ro"
+DNA_HARMFUL_REVISION = "dc75af6212079ccbfbb06a1705f6c458e39834f3"
+
+
+def _label_index(value: str) -> int:
+    match = re.fullmatch(r"LABEL_(\d+)", value)
+    if not match:
+        raise InferenceError(f"Unexpected released Longformer label: {value!r}")
+    return int(match.group(1))
+
+
+def score_do_not_answer_longformer(
+    observations: str | Path, output: str | Path, device: int = 0, batch_size: int = 64,
+) -> None:
+    """Run Do-Not-Answer's released response-only Longformer evaluators.
+
+    This follows ``4_automatic_evaluation_PLM.ipynb`` exactly: each checkpoint
+    is invoked through ``transformers.pipeline`` on the response string alone.
+    Batching changes throughput only, not the model inputs or predictions.
+    """
+    try:
+        from transformers import pipeline
+    except ImportError as exc:
+        raise RuntimeError("Install persona-audit[inference] to run the released Longformer evaluators") from exc
+    if batch_size < 1:
+        raise InferenceError("batch_size must be positive")
+    # The released response-only models consume no question metadata.
+    rows = [row for row in read_jsonl(observations) if row.get("family") == "do_not_answer"]
+    if not rows:
+        raise InferenceError("No Do-Not-Answer observations found")
+    responses = [row["completion"] for row in rows]
+    action = pipeline("text-classification", model=DNA_ACTION_MODEL, revision=DNA_ACTION_REVISION, device=device)
+    harmful = pipeline("text-classification", model=DNA_HARMFUL_MODEL, revision=DNA_HARMFUL_REVISION, device=device)
+    action_scores = action(responses, batch_size=batch_size)
+    harmful_scores = harmful(responses, batch_size=batch_size)
+    if len(action_scores) != len(rows) or len(harmful_scores) != len(rows):
+        raise InferenceError("Released Longformer scorer returned an unexpected number of predictions")
+    output_rows = []
+    for row, action_score, harmful_score in zip(rows, action_scores, harmful_scores, strict=True):
+        output_rows.append({
+            "node_id": row["node_id"], "target_id": row["target_id"], "family": "do_not_answer",
+            "split": row["split"], "action": _label_index(action_score["label"]),
+            "action_confidence": float(action_score["score"]),
+            "harmful": _label_index(harmful_score["label"]),
+            "harmful_confidence": float(harmful_score["score"]),
+            "action_model": DNA_ACTION_MODEL, "action_model_revision": DNA_ACTION_REVISION,
+            "harmful_model": DNA_HARMFUL_MODEL, "harmful_model_revision": DNA_HARMFUL_REVISION,
+            "protocol": "executed released DNA notebook 4 response-only Longformer pipelines",
+        })
+    atomic_jsonl(output, output_rows)
 
 
 def _parse_dna(text: str) -> int:

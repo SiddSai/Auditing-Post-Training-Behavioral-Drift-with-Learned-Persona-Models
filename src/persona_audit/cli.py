@@ -19,7 +19,7 @@ from .sources import (
 from .state import fit_state
 from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
-from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
+from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
 
 
@@ -157,6 +157,11 @@ def main(argv: list[str] | None = None) -> None:
     ifeval_score.add_argument("--targets", required=True)
     ifeval_score.add_argument("--source-root", required=True)
     ifeval_score.add_argument("--output", required=True)
+    dna_longformer = sub.add_parser("score-do-not-answer-longformer")
+    dna_longformer.add_argument("--observations", required=True)
+    dna_longformer.add_argument("--output", required=True)
+    dna_longformer.add_argument("--device", type=int, default=0)
+    dna_longformer.add_argument("--batch-size", type=int, default=64)
     judge_apply = sub.add_parser("apply-judge-responses")
     judge_apply.add_argument("--requests", required=True)
     judge_apply.add_argument("--responses", required=True)
@@ -245,6 +250,8 @@ def main(argv: list[str] | None = None) -> None:
         score_xstest_native(args.observations, args.targets, args.output)
     elif args.command == "score-ifeval-native":
         score_ifeval_native(args.observations, args.targets, args.source_root, args.output)
+    elif args.command == "score-do-not-answer-longformer":
+        score_do_not_answer_longformer(args.observations, args.output, args.device, args.batch_size)
     elif args.command == "apply-judge-responses":
         apply_judge_responses(args.requests, args.responses, args.family, args.output)
     elif args.command == "run-openai-judge":
