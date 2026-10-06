@@ -9,6 +9,7 @@ from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
 from .manifests import load_anchors, load_nodes, load_wild_nodes
 from .preflight import validate_tokenizer_candidates
+from .splits import write_panel_splits
 from .sources import (
     ANTHROPIC_EVALS_PERSONA_REVISION,
     import_anthropic_persona,
@@ -66,6 +67,11 @@ def main(argv: list[str] | None = None) -> None:
     tokenizer.add_argument("--anchors", required=True)
     tokenizer.add_argument("--output", required=True)
 
+    splits = sub.add_parser("write-panel-splits")
+    splits.add_argument("--nodes", required=True)
+    splits.add_argument("--wild-nodes")
+    splits.add_argument("--output-dir", required=True)
+
     def inference_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--nodes", required=True)
         command.add_argument("--wild-nodes", help="Optional admitted observational descendants manifest")
@@ -95,6 +101,7 @@ def main(argv: list[str] | None = None) -> None:
     state.add_argument("--output-dir", required=True)
     state.add_argument("--method", choices=["pca", "factor"], default="pca")
     state.add_argument("--dimensions", type=int, default=8)
+    state.add_argument("--feature", choices=["behavior_logit_margin", "behavior_probability"], default="behavior_logit_margin")
 
     args = parser.parse_args(argv)
     if args.command == "validate":
@@ -112,6 +119,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif args.command == "validate-tokenizer":
         validate_tokenizer_candidates(args.model_repo, args.model_revision, args.anchors, args.output)
+    elif args.command == "write-panel-splits":
+        write_panel_splits(args.nodes, args.output_dir, args.wild_nodes)
     elif args.command == "run-node":
         selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
         if selected is None:
@@ -125,7 +134,11 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "collect-observations":
         collect_observations(args.run_dir, args.output)
     elif args.command == "fit-state":
-        fit_state(args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()), json.loads(Path(args.transform_nodes).read_text()), args.output_dir, args.dimensions, args.method)
+        fit_state(
+            args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),
+            json.loads(Path(args.transform_nodes).read_text()), args.output_dir, args.dimensions,
+            args.method, args.feature,
+        )
 
 
 if __name__ == "__main__":

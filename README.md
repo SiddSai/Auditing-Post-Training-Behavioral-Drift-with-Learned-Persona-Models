@@ -20,8 +20,9 @@ bash scripts/04_pilot.sh
 
 `04_pilot.sh` is deliberately a three-model smoke test, not the expensive full
 panel. Inspect its `runs/pilot_v1/*.metadata.json` artifacts before launching
-the 58-node sweep. The target-domain/rubric predictor is the next research
-module and is not represented by these GPU commands yet.
+the 58-node sweep. After the full sweep, run `bash scripts/05_fit_full_state.sh`.
+It creates the primary all-panel PCA state and a base-trajectory-only reference
+ablation. The target-domain/rubric predictor is the next research module.
 
 Install the package with inference dependencies on the GPU machine:
 

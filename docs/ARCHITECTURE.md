@@ -57,6 +57,13 @@ The initial encoder is PCA or factor analysis, not a learned neural network.
 This is the scientifically conservative baseline and makes each state axis
 inspectable. A supervised/learned encoder is a later ablation.
 
+For the primary **descriptive** state map, PCA is fit on all observed panel
+nodes (46 primary plus 12 wild descendants): the purpose is to summarize the
+geometry of the panel we have measured. We also export a base-trajectory-only
+reference. For every predictive result that claims generalization to held-out
+models, the scaler and encoder must instead be refit inside that result's outer
+training fold; this prevents transductive use of held-out anchor fingerprints.
+
 ## Package layout
 
 ```text
@@ -110,9 +117,11 @@ node_id, anchor_id, model_sha, family,
 candidate_logprobs, behavior_logit_margin, behavior_probability
 ```
 
-The primary feature is the two-candidate normalized probability of the
-behavior-consistent answer. Keep both raw candidate log-probabilities so the
-scoring choice can be audited later.
+The primary state feature is `behavior_logit_margin`: the behavior-consistent
+candidate log-probability minus its alternative. `behavior_probability` is
+retained for interpretation, but the margin avoids probability saturation.
+Keep both raw candidate log-probabilities so the scoring choice can be audited
+later.
 
 ### State artifact
 

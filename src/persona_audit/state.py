@@ -17,13 +17,14 @@ from .manifests import load_anchors
 class StateFitMetadata:
     method: str
     dimensions: int
+    feature: str
     fit_node_ids: list[str]
     observation_path_sha256: str
     anchor_manifest_sha256: str
 
 
 def _load_observation_matrix(
-    observations_path: str | Path, node_ids: list[str], expected_anchor_ids: list[str]
+    observations_path: str | Path, node_ids: list[str], expected_anchor_ids: list[str], feature: str
 ) -> tuple[list[str], np.ndarray]:
     rows = read_jsonl(observations_path)
     by_node: dict[str, dict[str, float]] = {node: {} for node in node_ids}
@@ -32,7 +33,12 @@ def _load_observation_matrix(
         if node in by_node:
             if anchor in by_node[node]:
                 raise ManifestError(f"Duplicate observation for node={node!r}, anchor={anchor!r}")
-            by_node[node][anchor] = float(row["behavior_probability"])
+            if feature not in row:
+                raise ManifestError(f"Observation for node={node!r}, anchor={anchor!r} lacks feature {feature!r}")
+            value = float(row[feature])
+            if not np.isfinite(value):
+                raise ManifestError(f"Observation for node={node!r}, anchor={anchor!r} has non-finite {feature!r}")
+            by_node[node][anchor] = value
     observed_anchors = sorted({anchor for values in by_node.values() for anchor in values})
     expected = sorted(expected_anchor_ids)
     if not observed_anchors:
@@ -61,13 +67,16 @@ def fit_state(
     output_dir: str | Path,
     dimensions: int = 8,
     method: str = "pca",
+    feature: str = "behavior_logit_margin",
 ) -> None:
     if not set(fit_node_ids) <= set(transform_node_ids):
         raise ManifestError("fit_node_ids must be included in transform_node_ids")
     expected_anchor_ids = [anchor.anchor_id for anchor in load_anchors(anchor_manifest_path)]
     if dimensions < 1 or dimensions > min(len(fit_node_ids), len(expected_anchor_ids)):
         raise ManifestError("dimensions must be between 1 and min(number of fit nodes, number of anchors)")
-    anchors, matrix = _load_observation_matrix(observations_path, transform_node_ids, expected_anchor_ids)
+    if feature not in {"behavior_logit_margin", "behavior_probability"}:
+        raise ManifestError("feature must be behavior_logit_margin or behavior_probability")
+    anchors, matrix = _load_observation_matrix(observations_path, transform_node_ids, expected_anchor_ids, feature)
     fit_indices = [transform_node_ids.index(node) for node in fit_node_ids]
     scaler = StandardScaler().fit(matrix[fit_indices])
     scaled = scaler.transform(matrix)
@@ -81,5 +90,5 @@ def fit_state(
         writer = csv.writer(handle)
         writer.writerow(["node_id", *[f"z_{i:02d}" for i in range(dimensions)]])
         writer.writerows([[node, *row] for node, row in zip(transform_node_ids, states, strict=True)])
-    metadata = StateFitMetadata(method, dimensions, fit_node_ids, file_sha256(observations_path), file_sha256(anchor_manifest_path))
+    metadata = StateFitMetadata(method, dimensions, feature, fit_node_ids, file_sha256(observations_path), file_sha256(anchor_manifest_path))
     atomic_json(destination / "metadata.json", {**asdict(metadata), "transform_node_ids": transform_node_ids})

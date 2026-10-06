@@ -11,6 +11,7 @@ from persona_audit.inference import collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
 from persona_audit.manifests import load_anchors, load_nodes, load_wild_nodes
 from persona_audit.sources import import_anthropic_persona
+from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
 
 
@@ -45,7 +46,8 @@ class PipelineTests(unittest.TestCase):
             rows = []
             for node_index, node in enumerate(("n1", "n2", "n3")):
                 for anchor_index, anchor in enumerate(anchors):
-                    rows.append({"node_id": node, "anchor_id": anchor.anchor_id, "behavior_probability": 0.1 + .1 * node_index + .01 * anchor_index})
+                    probability = 0.1 + .1 * node_index + .01 * anchor_index
+                    rows.append({"node_id": node, "anchor_id": anchor.anchor_id, "behavior_probability": probability, "behavior_logit_margin": probability * 2})
             observations.write_text("".join(json.dumps(row) + "\n" for row in rows))
             fit_state(observations, sampled, ["n1", "n2"], ["n1", "n2", "n3"], root / "state", dimensions=2)
             self.assertTrue((root / "state/states.csv").exists())
@@ -61,8 +63,8 @@ class PipelineTests(unittest.TestCase):
             ]) + "\n")
             observations = root / "observations.jsonl"
             observations.write_text("\n".join([
-                json.dumps({"node_id": "n1", "anchor_id": "a", "behavior_probability": 0.4}),
-                json.dumps({"node_id": "n1", "anchor_id": "a", "behavior_probability": 0.5}),
+                json.dumps({"node_id": "n1", "anchor_id": "a", "behavior_probability": 0.4, "behavior_logit_margin": -0.4}),
+                json.dumps({"node_id": "n1", "anchor_id": "a", "behavior_probability": 0.5, "behavior_logit_margin": 0.5}),
             ]) + "\n")
             with self.assertRaises(ManifestError):
                 fit_state(observations, anchors, ["n1"], ["n1"], root / "state", dimensions=1)
@@ -101,6 +103,14 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(imported[0]["behavior_consistent_candidate"], " Yes")
             self.assertEqual(imported[0]["source_revision"], revision)
             self.assertTrue((root / "pool.jsonl.provenance.json").exists())
+
+    def test_panel_split_writer_includes_all_nodes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(__file__).parents[1]
+            output = Path(temp)
+            write_panel_splits(root / "manifests/nodes.tsv", output, root / "manifests/wild_candidates.tsv")
+            self.assertEqual(len(json.loads((output / "all_panel_nodes.json").read_text())), 58)
+            self.assertEqual(len(json.loads((output / "base_trajectory_nodes.json").read_text())), 40)
 
 
 if __name__ == "__main__":
