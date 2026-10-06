@@ -223,6 +223,9 @@ class PipelineTests(unittest.TestCase):
             primary_split = primary_metadata["splits"]["all_native_models_prompt_holdout"]
             self.assertEqual(len(primary_split["train_nodes"]), 18)
             self.assertEqual(primary_split["train_nodes"], primary_split["test_nodes"])
+            primary_audit = root / "native_primary_audit"
+            audit_predictor_results(primary_output / "predictions.jsonl", primary_output / "state_geometry.jsonl", primary_audit)
+            self.assertTrue((primary_audit / "geometry_summary.json").exists())
 
 
 if __name__ == "__main__":

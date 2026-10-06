@@ -283,9 +283,13 @@ def run_predictor_experiment(
     for split_name, (train_nodes, test_nodes) in split_specs.items():
         states, geometry = _states_for_fold(anchor_observations, anchors, train_nodes, all_node_ids, state_dimensions, state_method)
         for node_id in all_node_ids:
+            in_train, in_test = node_id in train_nodes, node_id in test_nodes
             geometry_rows.append({
                 "split": split_name, "node_id": node_id,
-                "partition": "train" if node_id in train_nodes else ("test" if node_id in test_nodes else "unused"),
+                # Prompt-held-out analyses intentionally use the same models
+                # for state fitting and behavioral evaluation. Preserve that
+                # fact rather than silently assigning them to train only.
+                "partition": "train_and_test" if in_train and in_test else ("train" if in_train else ("test" if in_test else "unused")),
                 "state_method": state_method, "state_dimensions": state_dimensions,
                 **{f"z_{index:02d}": float(value) for index, value in enumerate(states[node_id])}, **geometry[node_id],
             })
@@ -385,6 +389,6 @@ def audit_predictor_results(predictions_path: str | Path, geometry_path: str | P
     geometry = read_jsonl(geometry_path)
     geometry_summary = []
     for split in sorted({row["split"] for row in geometry}):
-        test = [row for row in geometry if row["split"] == split and row["partition"] == "test"]
+        test = [row for row in geometry if row["split"] == split and row["partition"] in {"test", "train_and_test"}]
         geometry_summary.append({"split": split, "test_models": len(test), "within_train_coordinate_range": sum(bool(row["within_train_coordinate_range"]) for row in test), "median_mahalanobis_sq": float(np.median([row["mahalanobis_sq"] for row in test])), "max_mahalanobis_sq": float(max(row["mahalanobis_sq"] for row in test))})
     atomic_json(destination / "geometry_summary.json", geometry_summary)
