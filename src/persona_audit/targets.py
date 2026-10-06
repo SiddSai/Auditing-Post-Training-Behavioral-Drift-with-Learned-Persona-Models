@@ -18,11 +18,11 @@ from .errors import ManifestError
 from .io import atomic_json, atomic_jsonl, canonical_json, file_sha256, read_jsonl
 
 TARGET_SOURCES = {
-    "sycophancy": ("https://github.com/meg-tong/sycophancy-eval.git", "3ad652c773f5d1e30d5f6f61657ed934d768ecad"),
-    "xstest": ("https://github.com/paul-rottger/xstest.git", "460703484df354958a5e1cd7378a38fcb94a2f3e"),
-    "do_not_answer": ("https://github.com/Libr-AI/do-not-answer.git", "9a1694221e3639887138f61deae344335eca6752"),
+    "sycophancy": ("https://github.com/meg-tong/sycophancy-eval.git", "9a1694221e3639887138f61deae344335eca6752"),
+    "xstest": ("https://github.com/paul-rottger/xstest.git", "d7bb5bd738c1fcbc36edd83d5e7d1b71a3e2d84d"),
+    "do_not_answer": ("https://github.com/Libr-AI/do-not-answer.git", "460703484df354958a5e1cd7378a38fcb94a2f3e"),
     "ifeval": ("https://github.com/google-research/google-research.git", "e49bbfe381c9c0e564b937f1c4e163a2273c65cc"),
-    "truthfulqa": ("https://github.com/sylinrl/TruthfulQA.git", "d7bb5bd738c1fcbc36edd83d5e7d1b71a3e2d84d"),
+    "truthfulqa": ("https://github.com/sylinrl/TruthfulQA.git", "d71c110897f5d31c5d7f309e7bc316c152f6f031"),
 }
 
 
