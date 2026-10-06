@@ -184,9 +184,13 @@ def score_do_not_answer_longformer(
     if not rows:
         raise InferenceError("No Do-Not-Answer observations found")
     responses = [row["completion"] for row in rows]
+    print(f"[dna-longformer] loading action evaluator for {len(rows)} responses", flush=True)
     action = pipeline("text-classification", model=DNA_ACTION_MODEL, revision=DNA_ACTION_REVISION, device=device)
-    harmful = pipeline("text-classification", model=DNA_HARMFUL_MODEL, revision=DNA_HARMFUL_REVISION, device=device)
+    print("[dna-longformer] scoring action categories", flush=True)
     action_scores = action(responses, batch_size=batch_size)
+    print("[dna-longformer] loading harmfulness evaluator", flush=True)
+    harmful = pipeline("text-classification", model=DNA_HARMFUL_MODEL, revision=DNA_HARMFUL_REVISION, device=device)
+    print("[dna-longformer] scoring harmfulness", flush=True)
     harmful_scores = harmful(responses, batch_size=batch_size)
     if len(action_scores) != len(rows) or len(harmful_scores) != len(rows):
         raise InferenceError("Released Longformer scorer returned an unexpected number of predictions")
@@ -203,6 +207,7 @@ def score_do_not_answer_longformer(
             "protocol": "executed released DNA notebook 4 response-only Longformer pipelines",
         })
     atomic_jsonl(output, output_rows)
+    print(f"[dna-longformer] wrote {len(output_rows)} rows to {output}", flush=True)
 
 
 def _parse_dna(text: str) -> int:
