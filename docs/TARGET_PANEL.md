@@ -24,7 +24,7 @@ target--anchor lexical-overlap report. It creates exactly 300 development and
 | SycophancyEval | sole human content in `datasets/answer.jsonl` | original question, correct/incorrect answer, perturbation template | 64 |
 | XSTest | `xstest_prompts.csv:prompt` | released safe/unsafe label and contrast type | 256 |
 | Do-Not-Answer | `datasets/data_en.csv:question` | risk area and harm taxonomy | 256 |
-| BOLD | prompt JSON continuation string | domain, category, entity | 64 |
+| IFEval | `instruction_following_eval/data/input_data.jsonl:prompt` | released constraint IDs and arguments | 512 |
 | TruthfulQA | `TruthfulQA.csv:Question` | released correct and incorrect answer sets | 128 |
 
 ## What “outcome scoring” means here
@@ -46,8 +46,7 @@ score:
   with an external fine-tuned judge in the original release.
 - Do-Not-Answer reports a released Longformer action evaluator (and GPT-4/human
   evaluation); its score must be run as a separately pinned judging stage.
-- BOLD is a continuation dataset evaluated with demographic-bias metrics and
-  classifiers, not a single gold completion label.
+- IFEval uses its released deterministic strict and loose instruction checkers.
 - SycophancyEval's original answer setup was API/message based; our raw-string
   single-turn adaptation preserves its prompts and answer metadata but does not
   pretend its greedy continuation is the paper's original metric.
@@ -58,17 +57,16 @@ re-runnable.
 
 ## Source-native scoring commands
 
-After collection, install the additional scorer dependencies and prepare the
-released scorer inputs:
+After collection, prepare the released scorer inputs (the VM install script
+already installs the scorer dependencies):
 
 ```bash
-pip install -e '.[inference,scoring]'
 bash scripts/09_prepare_native_scorers.sh
 ```
 
-This executes XSTest's released string-match rule and BOLD's recoverable
-paper-era VADER component, and writes request files for each source-native
-judge. `scripts/10_run_judged_scorers.sh` prints the two intentional paid/API
+This executes XSTest's released string-match rule and Google's released IFEval
+strict/loose checkers, and writes request files for each source-native judge.
+`scripts/10_run_judged_scorers.sh` prints the two intentional paid/API
 steps. It is not run automatically because it can create tens of thousands of
 judge requests and because the original GPT-4 endpoints are no longer a stable
 artifact. The runner records the chosen contemporary judge model, raw response,
@@ -76,10 +74,7 @@ and exact source template; it is therefore a **declared protocol adaptation**.
 
 TruthfulQA has an executable Gemini judge in the pinned source checkout and is
 run directly by `persona-audit score-truthfulqa-gemini`. Its Gemini model must
-be supplied explicitly and is written into the score artifact. BOLD's original
-prompt repository has no evaluator code; its paper-era toxicity checkpoint and
-some other metric artifacts were not released. We retain this absence in the
-provenance rather than labelling a replacement classifier as original BOLD.
+be supplied explicitly and is written into the score artifact.
 
 ## Separating anchors from targets
 
@@ -107,5 +102,5 @@ Expected final count: `58 * 2250 = 130,500` completion records.
 - Sharma et al., SycophancyEval: <https://github.com/meg-tong/sycophancy-eval>
 - Röttger et al., XSTest: <https://github.com/paul-rottger/xstest>
 - Wang et al., Do-Not-Answer: <https://github.com/Libr-AI/do-not-answer>
-- Dhamala et al., BOLD: <https://github.com/amazon-science/bold>
+- Zhou et al., IFEval: <https://github.com/google-research/google-research/tree/master/instruction_following_eval>
 - Lin et al., TruthfulQA: <https://github.com/sylinrl/TruthfulQA>

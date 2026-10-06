@@ -13,8 +13,8 @@ persona-audit snapshot-git --repository https://github.com/paul-rottger/xstest.g
   --revision 460703484df354958a5e1cd7378a38fcb94a2f3e --output "$source_root/xstest"
 persona-audit snapshot-git --repository https://github.com/Libr-AI/do-not-answer.git \
   --revision 9a1694221e3639887138f61deae344335eca6752 --output "$source_root/do_not_answer"
-persona-audit snapshot-git --repository https://github.com/amazon-science/bold.git \
-  --revision 4dee2311b23de20b43bfc12ace7037f3f71ba421 --output "$source_root/bold"
+persona-audit snapshot-git --repository https://github.com/google-research/google-research.git \
+  --revision e49bbfe381c9c0e564b937f1c4e163a2273c65cc --output "$source_root/ifeval"
 persona-audit snapshot-git --repository https://github.com/sylinrl/TruthfulQA.git \
   --revision d7bb5bd738c1fcbc36edd83d5e7d1b71a3e2d84d --output "$source_root/truthfulqa"
 

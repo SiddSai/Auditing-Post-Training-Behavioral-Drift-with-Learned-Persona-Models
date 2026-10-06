@@ -11,10 +11,9 @@ mkdir -p "$out"
 persona-audit write-native-scorer-inputs --observations "$obs" --targets "$targets" --output-dir "$out"
 persona-audit score-xstest-native --observations "$obs" --targets "$targets" --output "$out/xstest_scores.jsonl"
 
-# BOLD's prompt repository ships no evaluator. This runs its reproducible
-# paper-era VADER component; unreleased toxicity/regard artifacts stay absent.
-persona-audit score-bold-vader --observations "$obs" --targets "$targets" \
-  --output "$out/bold_vader_scores.jsonl" --download-lexicon
+# Execute the released strict and loose IFEval checkers.
+persona-audit score-ifeval-native --observations "$obs" --targets "$targets" \
+  --source-root data/snapshots/target_sources_v1 --output "$out/ifeval_scores.jsonl"
 
 echo 'Prepared source-native requests and local scores under' "$out"
 echo 'See scripts/10_run_judged_scorers.sh for API-backed released-template judges.'

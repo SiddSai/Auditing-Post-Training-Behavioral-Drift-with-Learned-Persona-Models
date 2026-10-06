@@ -111,12 +111,12 @@ def write_native_inputs(observations: str | Path, targets: str | Path, output_di
         meta, obs = row["target"]["metadata"], row["observation"]
         truthful.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "split": obs["split"], "question": row["target"]["prompt_raw"], "answer": obs["completion"], "correct_answers": [item.strip() for item in meta["Correct Answers"].split(";")], "incorrect_answers": [item.strip() for item in meta["Incorrect Answers"].split(";")], "source_protocol": "truthfulqa/judge_gemini.py + judge_prompts.py"})
     atomic_jsonl(root / "truthfulqa_gemini_requests.jsonl", truthful)
-    bold = []
-    for row in by_family["bold"]:
+    ifeval = []
+    for row in by_family["ifeval"]:
         target, obs = row["target"], row["observation"]
-        bold.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "split": obs["split"], "domain": target["metadata"]["domain"], "category": target["metadata"]["category"], "entity": target["metadata"]["entity"], "prompt": target["prompt_raw"], "completion": obs["completion"]})
-    atomic_jsonl(root / "bold_completions.jsonl", bold)
-    atomic_json(root / "metadata.json", {"observations_sha256": file_sha256(observations), "targets_sha256": file_sha256(targets), "source_status": {"xstest": "released local scorer", "sycophancy": "released GPT-4 template", "do_not_answer": "released GPT-4 template/parser and training code; no published pretrained Longformer checkpoint", "truthfulqa": "pinned repository Gemini judge", "bold": "official repository contains prompts only; paper-era toxicity artifact unavailable"}})
+        ifeval.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "split": obs["split"], "prompt": target["prompt_raw"], "response": obs["completion"], "key": target["metadata"]["key"], "instruction_id_list": target["metadata"]["instruction_id_list"], "kwargs": target["metadata"]["kwargs"]})
+    atomic_jsonl(root / "ifeval_responses.jsonl", ifeval)
+    atomic_json(root / "metadata.json", {"observations_sha256": file_sha256(observations), "targets_sha256": file_sha256(targets), "source_status": {"xstest": "released local scorer", "sycophancy": "released GPT-4 template", "do_not_answer": "released GPT-4 template/parser and training code; no published pretrained Longformer checkpoint", "truthfulqa": "pinned repository Gemini judge", "ifeval": "released deterministic strict/loose scorer"}})
 
 
 def score_xstest_native(observations: str | Path, targets: str | Path, output: str | Path) -> None:
@@ -128,24 +128,23 @@ def score_xstest_native(observations: str | Path, targets: str | Path, output: s
     atomic_jsonl(output, rows)
 
 
-def score_bold_vader(observations: str | Path, targets: str | Path, output: str | Path, download_lexicon: bool = False) -> None:
-    """Run BOLD's recoverable paper-era VADER sentiment component only."""
+def score_ifeval_native(observations: str | Path, targets: str | Path, source_root: str | Path, output: str | Path) -> None:
+    """Execute Google's released IFEval strict and loose checkers per model."""
+    root = str(Path(source_root) / "ifeval")
+    sys.path.insert(0, root)
     try:
-        import nltk
-        from nltk.sentiment import SentimentIntensityAnalyzer
-    except ImportError as exc:
-        raise RuntimeError("Install persona-audit[scoring] for BOLD VADER scoring") from exc
-    if download_lexicon:
-        nltk.download("vader_lexicon", quiet=True)
-    try:
-        analyzer = SentimentIntensityAnalyzer()
-    except LookupError as exc:
-        raise RuntimeError("Missing NLTK vader_lexicon; rerun with --download-lexicon") from exc
-    rows = []
-    for item in _joined(observations, targets, "bold"):
-        obs, target = item["observation"], item["target"]
-        scores = analyzer.polarity_scores(obs["completion"])
-        rows.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "family": "bold", "split": obs["split"], "domain": target["metadata"]["domain"], "category": target["metadata"]["category"], "vader": scores, "protocol": "BOLD paper VADER sentiment component; only reproducible released component"})
+        evaluation_lib = importlib.import_module("instruction_following_eval.evaluation_lib")
+        rows = []
+        for item in _joined(observations, targets, "ifeval"):
+            target, obs = item["target"], item["observation"]
+            meta = target["metadata"]
+            inp = evaluation_lib.InputExample(key=int(meta["key"]), instruction_id_list=meta["instruction_id_list"], prompt=target["prompt_raw"], kwargs=meta["kwargs"])
+            responses = {target["prompt_raw"]: obs["completion"]}
+            strict = evaluation_lib.test_instruction_following_strict(inp, responses)
+            loose = evaluation_lib.test_instruction_following_loose(inp, responses)
+            rows.append({"node_id": obs["node_id"], "target_id": obs["target_id"], "family": "ifeval", "split": obs["split"], "strict_follow_all": strict.follow_all_instructions, "strict_follow_instruction_list": strict.follow_instruction_list, "loose_follow_all": loose.follow_all_instructions, "loose_follow_instruction_list": loose.follow_instruction_list, "protocol": "executed pinned google-research/instruction_following_eval evaluation_lib.py"})
+    finally:
+        if root in sys.path: sys.path.remove(root)
     atomic_jsonl(output, rows)
 
 

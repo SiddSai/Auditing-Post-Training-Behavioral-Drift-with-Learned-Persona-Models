@@ -9,6 +9,6 @@ if not (sys.version_info.major == 3 and 10 <= sys.version_info.minor <= 12):
 print("Python", sys.version)
 PY
 python -m pip install --upgrade pip
-python -m pip install -e '.[inference]'
+python -m pip install -e '.[inference,scoring]'
 python -m persona_audit.cli --help
 command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true

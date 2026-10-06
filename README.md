@@ -91,7 +91,7 @@ bash scripts/08_collect_and_score_targets.sh
 ```
 
 This fetches the five source-pinned target datasets (SycophancyEval, XSTest,
-Do-Not-Answer, BOLD, and TruthfulQA), freezes 300 development plus 150 held-out
+Do-Not-Answer, IFEval, and TruthfulQA), freezes 300 development plus 150 held-out
 evaluation prompts per dataset, then generates raw greedy completions. See
 [the target-panel protocol](docs/TARGET_PANEL.md) for what each source's
 published scoring procedure supports and why judge-required metrics are kept

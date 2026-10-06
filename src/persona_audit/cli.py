@@ -19,7 +19,7 @@ from .sources import (
 from .state import fit_state
 from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
-from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_bold_vader, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
+from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -145,11 +145,11 @@ def main(argv: list[str] | None = None) -> None:
     xstest_score.add_argument("--observations", required=True)
     xstest_score.add_argument("--targets", required=True)
     xstest_score.add_argument("--output", required=True)
-    bold_score = sub.add_parser("score-bold-vader")
-    bold_score.add_argument("--observations", required=True)
-    bold_score.add_argument("--targets", required=True)
-    bold_score.add_argument("--output", required=True)
-    bold_score.add_argument("--download-lexicon", action="store_true")
+    ifeval_score = sub.add_parser("score-ifeval-native")
+    ifeval_score.add_argument("--observations", required=True)
+    ifeval_score.add_argument("--targets", required=True)
+    ifeval_score.add_argument("--source-root", required=True)
+    ifeval_score.add_argument("--output", required=True)
     judge_apply = sub.add_parser("apply-judge-responses")
     judge_apply.add_argument("--requests", required=True)
     judge_apply.add_argument("--responses", required=True)
@@ -231,8 +231,8 @@ def main(argv: list[str] | None = None) -> None:
         write_native_inputs(args.observations, args.targets, args.output_dir)
     elif args.command == "score-xstest-native":
         score_xstest_native(args.observations, args.targets, args.output)
-    elif args.command == "score-bold-vader":
-        score_bold_vader(args.observations, args.targets, args.output, args.download_lexicon)
+    elif args.command == "score-ifeval-native":
+        score_ifeval_native(args.observations, args.targets, args.source_root, args.output)
     elif args.command == "apply-judge-responses":
         apply_judge_responses(args.requests, args.responses, args.family, args.output)
     elif args.command == "run-openai-judge":

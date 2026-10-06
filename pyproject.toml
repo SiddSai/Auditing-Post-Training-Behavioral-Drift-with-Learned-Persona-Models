@@ -19,7 +19,9 @@ inference = [
   "vllm>=0.12",
 ]
 scoring = [
-  "nltk>=3.8",
+  "absl-py>=1.0",
+  "langdetect>=1.0.9",
+  "immutabledict>=4.0",
   "google-generativeai>=0.8",
   "openai>=1.0",
 ]

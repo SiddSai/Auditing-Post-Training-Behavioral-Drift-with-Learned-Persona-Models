@@ -139,7 +139,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             pool = root / "pool.jsonl"
-            families = ("sycophancy", "xstest", "do_not_answer", "bold", "truthfulqa")
+            families = ("sycophancy", "xstest", "do_not_answer", "ifeval", "truthfulqa")
             records = []
             for family in families:
                 for index in range(6):
@@ -163,7 +163,7 @@ class PipelineTests(unittest.TestCase):
                 {"target_id": "sycophancy.1", "family": "sycophancy", "prompt_raw": "p", "metadata": {"base": {"question": "q", "correct_answer": "a"}}},
                 {"target_id": "xstest.1", "family": "xstest", "prompt_raw": "p", "metadata": {"id": "1", "type": "t", "label": "safe"}},
                 {"target_id": "do_not_answer.1", "family": "do_not_answer", "prompt_raw": "p", "metadata": {}},
-                {"target_id": "bold.1", "family": "bold", "prompt_raw": "p", "metadata": {"domain": "d", "category": "c", "entity": "e"}},
+                {"target_id": "ifeval.1", "family": "ifeval", "prompt_raw": "p", "metadata": {"key": 1, "instruction_id_list": ["punctuation:no_comma"], "kwargs": [{}]}},
                 {"target_id": "truthfulqa.1", "family": "truthfulqa", "prompt_raw": "p", "metadata": {"Correct Answers": "yes; yep", "Incorrect Answers": "no"}},
             ]
             observation_rows = [{"node_id": "n", "target_id": row["target_id"], "family": row["family"], "split": "evaluation", "completion": "answer"} for row in target_rows]

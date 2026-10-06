@@ -21,7 +21,7 @@ TARGET_SOURCES = {
     "sycophancy": ("https://github.com/meg-tong/sycophancy-eval.git", "3ad652c773f5d1e30d5f6f61657ed934d768ecad"),
     "xstest": ("https://github.com/paul-rottger/xstest.git", "460703484df354958a5e1cd7378a38fcb94a2f3e"),
     "do_not_answer": ("https://github.com/Libr-AI/do-not-answer.git", "9a1694221e3639887138f61deae344335eca6752"),
-    "bold": ("https://github.com/amazon-science/bold.git", "4dee2311b23de20b43bfc12ace7037f3f71ba421"),
+    "ifeval": ("https://github.com/google-research/google-research.git", "e49bbfe381c9c0e564b937f1c4e163a2273c65cc"),
     "truthfulqa": ("https://github.com/sylinrl/TruthfulQA.git", "d7bb5bd738c1fcbc36edd83d5e7d1b71a3e2d84d"),
 }
 
@@ -64,22 +64,13 @@ def import_target_pools(source_root: str | Path, output: str | Path) -> None:
     with (root / "do_not_answer" / "datasets" / "data_en.csv").open(encoding="utf-8", newline="") as handle:
         for value in csv.DictReader(handle):
             rows.append(_row("do_not_answer", value["id"], value["question"], f"{value['risk_area']}::{value['types_of_harm']}", max_tokens=256, source_file="datasets/data_en.csv", metadata={key: value[key] for key in ("id", "risk_area", "types_of_harm", "specific_harms")}))
-    # Dhamala et al. BOLD prompts, preserving domain/category/entity.  BOLD is
-    # an open-ended continuation benchmark, hence a deliberately shorter cap.
-    for file in sorted((root / "bold" / "prompts").glob("*_prompt.json")):
-        domain = file.name.removesuffix("_prompt.json")
-        value = json.loads(file.read_text(encoding="utf-8"))
-        for category, entities in value.items():
-            for entity, prompts in entities.items():
-                for prompt_index, prompt in enumerate(prompts):
-                    # The released BOLD JSON contains a small number of empty
-                    # strings. They cannot be generation prompts, so exclude
-                    # only those malformed source entries (with the resulting
-                    # pool hash/count recorded in provenance).
-                    if not isinstance(prompt, str) or not prompt.strip():
-                        continue
-                    source_id = f"{domain}.{category}.{entity}.{prompt_index}"
-                    rows.append(_row("bold", source_id, prompt, f"{domain}:{category}", max_tokens=64, source_file=f"prompts/{file.name}", metadata={"domain": domain, "category": category, "entity": entity, "prompt_index": prompt_index}))
+    # Google's IFEval prompt data includes the exact executable constraint
+    # specifications consumed later by its released strict/loose scorer.
+    with (root / "ifeval" / "instruction_following_eval" / "data" / "input_data.jsonl").open(encoding="utf-8") as handle:
+        for line in handle:
+            value = json.loads(line)
+            types = sorted({item.split(":", 1)[0] for item in value["instruction_id_list"]})
+            rows.append(_row("ifeval", str(value["key"]), value["prompt"], "+".join(types), max_tokens=512, source_file="instruction_following_eval/data/input_data.jsonl", metadata={"key": value["key"], "instruction_id_list": value["instruction_id_list"], "kwargs": value["kwargs"]}))
     # Lin et al. TruthfulQA generation prompts plus both released reference sets.
     with (root / "truthfulqa" / "TruthfulQA.csv").open(encoding="utf-8", newline="") as handle:
         for index, value in enumerate(csv.DictReader(handle)):
@@ -173,8 +164,8 @@ def score_target_observations(observations: str | Path, output: str | Path) -> N
     """Emit only locally reproducible, released target outcomes.
 
     TruthfulQA's official generation judge is a separately hosted fine-tuned
-    judge; Do-Not-Answer's is a released Longformer evaluator; BOLD reports
-    classifier/API metrics. Those are intentionally not replaced by heuristics.
+    judge; Do-Not-Answer's is a released Longformer evaluator. Those are
+    intentionally not replaced by heuristics.
     """
     rows = []
     for row in read_jsonl(observations):
