@@ -1,0 +1,12 @@
+{
+  "name": "anthropic_persona_v1",
+  "source": "anthropics/evals/persona",
+  "repository": "https://github.com/anthropics/evals.git",
+  "source_revision": "84fcc677e52e1902d696c32cd1a6b663e70d3993",
+  "importer": "import-anthropic-persona",
+  "raw_prompt_policy": "upstream_question_verbatim_without_EOT_or_chat_wrapper",
+  "min_label_confidence": null,
+  "sampler": "round_robin_over_(family,behavior_consistent_candidate)_strata",
+  "sample_size": 300,
+  "seed": 20261005
+}

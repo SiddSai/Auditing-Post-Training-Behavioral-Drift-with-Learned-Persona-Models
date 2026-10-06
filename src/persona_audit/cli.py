@@ -8,7 +8,12 @@ from .anchors import stratified_sample
 from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
 from .manifests import load_anchors, load_nodes, load_wild_nodes
-from .sources import snapshot_hf
+from .sources import (
+    ANTHROPIC_EVALS_PERSONA_REVISION,
+    import_anthropic_persona,
+    snapshot_anthropic_persona,
+    snapshot_hf,
+)
 from .state import fit_state
 
 
@@ -42,6 +47,17 @@ def main(argv: list[str] | None = None) -> None:
     snapshot.add_argument("--revision", required=True)
     snapshot.add_argument("--output", required=True)
     snapshot.add_argument("--repo-type", choices=["dataset", "model"], default="dataset")
+
+    anthropic_snapshot = sub.add_parser("snapshot-anthropic-persona")
+    anthropic_snapshot.add_argument("--output-dir", required=True)
+    anthropic_snapshot.add_argument("--revision", default=ANTHROPIC_EVALS_PERSONA_REVISION)
+
+    anthropic_import = sub.add_parser("import-anthropic-persona")
+    anthropic_import.add_argument("--source-dir", required=True)
+    anthropic_import.add_argument("--source-revision", required=True)
+    anthropic_import.add_argument("--output", required=True)
+    anthropic_import.add_argument("--provenance-output")
+    anthropic_import.add_argument("--min-label-confidence", type=float)
 
     def inference_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--nodes", required=True)
@@ -80,6 +96,13 @@ def main(argv: list[str] | None = None) -> None:
         stratified_sample(args.input, args.output, args.size, args.seed)
     elif args.command == "snapshot-hf":
         print(snapshot_hf(args.repo_id, args.revision, args.output, args.repo_type))
+    elif args.command == "snapshot-anthropic-persona":
+        print(snapshot_anthropic_persona(args.output_dir, args.revision))
+    elif args.command == "import-anthropic-persona":
+        import_anthropic_persona(
+            args.source_dir, args.source_revision, args.output, args.provenance_output,
+            args.min_label_confidence,
+        )
     elif args.command == "run-node":
         selected = _node_by_id(args.nodes, args.node_id, args.wild_nodes)
         if selected is None:

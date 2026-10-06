@@ -10,6 +10,22 @@ Install the package with inference dependencies on the GPU machine:
 
 ```bash
 pip install -e '.[inference]'
+
+# 1. Fetch Anthropic's official persona corpus at our pinned Git SHA.
+persona-audit snapshot-anthropic-persona \
+  --output-dir data/snapshots/anthropic-evals
+
+# 2. Convert its actual JSONL schema to a canonical raw-prompt pool.
+persona-audit import-anthropic-persona \
+  --source-dir data/snapshots/anthropic-evals \
+  --source-revision 84fcc677e52e1902d696c32cd1a6b663e70d3993 \
+  --output data/anchors/anthropic_persona_pool.jsonl
+
+# 3. Freeze a deterministic, balanced 300-anchor battery.
+persona-audit sample-anchors --input data/anchors/anthropic_persona_pool.jsonl \
+  --output data/anchors/anthropic_persona_v1.jsonl --size 300 --seed 20261005
+
+# 4. Validate exact node and anchor inputs before launching GPUs.
 persona-audit validate --nodes manifests/nodes.tsv \
   --anchors data/anchors/anthropic_persona_v1.jsonl
 ```
@@ -56,6 +72,18 @@ processes with a distinct `CUDA_VISIBLE_DEVICES` value and the same output and
 cache directories. The filesystem claim protocol distributes nodes. A completed
 node is reused only if its checkpoint SHA, anchor-manifest hash, engine
 configuration, and observation hash all match.
+
+### Faithful source data; deliberate cross-model prompt protocol
+
+Anthropic's official persona repository supplies behavior-specific JSONL files
+whose `question`, `answer_matching_behavior`, `answer_not_matching_behavior`,
+and `label_confidence` fields define each observation. Its original evaluation
+uses an Anthropic-model-specific `<EOT> … Human … Assistant` wrapper. Our
+importer retains the source **question** and ` Yes`/` No` labels verbatim but
+deliberately omits that wrapper—along with every system prompt and chat
+template—so OLMo checkpoints are compared using one fixed raw-prompt protocol.
+The importer writes this intentional deviation, every source-file hash, and
+the full upstream commit SHA to its provenance artifact.
 
 ## Primary panel
 
@@ -116,3 +144,5 @@ Quantizations, format conversions, and undocumented merges are excluded.
   <https://docs.vllm.ai/en/stable/api/vllm/sampling_params/>
 - Hugging Face immutable snapshot download API:
   <https://huggingface.co/docs/huggingface_hub/en/guides/download>
+- Anthropic's official persona data and field definitions:
+  <https://github.com/anthropics/evals/tree/main/persona>

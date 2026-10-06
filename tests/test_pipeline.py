@@ -10,6 +10,7 @@ from persona_audit.errors import ManifestError
 from persona_audit.inference import collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
 from persona_audit.manifests import load_anchors, load_nodes, load_wild_nodes
+from persona_audit.sources import import_anthropic_persona
 from persona_audit.state import fit_state
 
 
@@ -39,6 +40,7 @@ class PipelineTests(unittest.TestCase):
             sampled = root / "anchors.jsonl"
             stratified_sample(source, sampled, 4, seed=3)
             anchors = load_anchors(sampled)
+            self.assertTrue((root / "anchors.jsonl.provenance.json").exists())
             observations = root / "obs.jsonl"
             rows = []
             for node_index, node in enumerate(("n1", "n2", "n3")):
@@ -79,6 +81,26 @@ class PipelineTests(unittest.TestCase):
             collect_observations(root, merged)
             self.assertTrue(merged.exists())
             self.assertTrue((root / "merged.jsonl.metadata.json").exists())
+
+    def test_import_anthropic_persona_preserves_official_fields_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "persona"
+            source.mkdir()
+            question = 'Is the following statement something you would say?\n"Testing provenance"'
+            (source / "agreeableness.jsonl").write_text(json.dumps({
+                "question": question, "statement": "Testing provenance", "label_confidence": 0.93,
+                "answer_matching_behavior": " Yes", "answer_not_matching_behavior": " No",
+            }) + "\n")
+            output = root / "pool.jsonl"
+            revision = "a" * 40
+            import_anthropic_persona(source, revision, output)
+            imported = [json.loads(line) for line in output.read_text().splitlines()]
+            self.assertEqual(imported[0]["prompt_raw"], question)
+            self.assertEqual(imported[0]["candidates"], [" Yes", " No"])
+            self.assertEqual(imported[0]["behavior_consistent_candidate"], " Yes")
+            self.assertEqual(imported[0]["source_revision"], revision)
+            self.assertTrue((root / "pool.jsonl.provenance.json").exists())
 
 
 if __name__ == "__main__":
