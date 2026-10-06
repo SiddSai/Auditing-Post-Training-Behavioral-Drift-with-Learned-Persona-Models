@@ -267,7 +267,8 @@ def run_predictor_experiment(
         states, geometry = _states_for_fold(anchor_observations, anchors, train_nodes, all_node_ids, state_dimensions, state_method)
         for node_id in all_node_ids:
             geometry_rows.append({
-                "split": split_name, "node_id": node_id, "partition": "train" if node_id in train_nodes else "test",
+                "split": split_name, "node_id": node_id,
+                "partition": "train" if node_id in train_nodes else ("test" if node_id in test_nodes else "unused"),
                 "state_method": state_method, "state_dimensions": state_dimensions,
                 **{f"z_{index:02d}": float(value) for index, value in enumerate(states[node_id])}, **geometry[node_id],
             })
@@ -336,15 +337,30 @@ def audit_predictor_results(predictions_path: str | Path, geometry_path: str | P
         predicted = float(np.mean([row["probability"] for row in rows]))
         model_rows.append({"split": split, "family": family, "variant": variant, "node_id": node_id, "n_prompts": len(rows), "observed_rate": observed, "predicted_rate": predicted, "absolute_error": abs(observed - predicted)})
     atomic_jsonl(destination / "model_level_predictions.jsonl", model_rows)
+    def average_ranks(values: np.ndarray) -> np.ndarray:
+        """Average tied ranks, matching the usual Spearman convention."""
+        order = np.argsort(values, kind="mergesort")
+        ranks = np.empty(len(values), dtype=float)
+        start = 0
+        while start < len(values):
+            end = start + 1
+            while end < len(values) and values[order[end]] == values[order[start]]:
+                end += 1
+            ranks[order[start:end]] = (start + end - 1) / 2
+            start = end
+        return ranks
+
     summaries: list[dict[str, Any]] = []
     for split in sorted({row["split"] for row in model_rows}):
         for family in sorted({row["family"] for row in model_rows if row["split"] == split}):
             for variant in sorted({row["variant"] for row in model_rows if row["split"] == split and row["family"] == family}):
                 rows = [row for row in model_rows if row["split"] == split and row["family"] == family and row["variant"] == variant]
                 observed, predicted = np.asarray([row["observed_rate"] for row in rows]), np.asarray([row["predicted_rate"] for row in rows])
-                pearson = None if np.std(observed) == 0 or np.std(predicted) == 0 else float(np.corrcoef(observed, predicted)[0, 1])
-                # Rank correlation without an optional scipy dependency.
-                ranks_o = np.argsort(np.argsort(observed)); ranks_p = np.argsort(np.argsort(predicted))
+                nonconstant_prediction = np.ptp(predicted) > 1e-12
+                pearson = None if np.std(observed) == 0 or not nonconstant_prediction else float(np.corrcoef(observed, predicted)[0, 1])
+                # Rank correlation without an optional scipy dependency, with
+                # tied predictions receiving equal (average) ranks.
+                ranks_o, ranks_p = average_ranks(observed), average_ranks(predicted)
                 spearman = None if np.std(ranks_o) == 0 or np.std(ranks_p) == 0 else float(np.corrcoef(ranks_o, ranks_p)[0, 1])
                 summaries.append({"split": split, "family": family, "variant": variant, "n_models": len(rows), "model_level_mae": float(np.mean(np.abs(observed - predicted))), "model_level_pearson": pearson, "model_level_spearman": spearman})
     with (destination / "model_level_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
