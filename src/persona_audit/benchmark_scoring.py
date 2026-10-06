@@ -239,6 +239,7 @@ def run_openai_judge(
                 newly_scored += 1
                 if newly_scored % 25 == 0:
                     atomic_jsonl(output, [existing[item] for item in sorted(existing)])
+                    print(f"[openai-judge] completed {newly_scored}/{len(pending)} new requests", flush=True)
         except Exception:
             atomic_jsonl(output, [existing[item] for item in sorted(existing)])
             for future in futures:
@@ -246,6 +247,7 @@ def run_openai_judge(
             raise
     if newly_scored:
         atomic_jsonl(output, [existing[item] for item in sorted(existing)])
+    print(f"[openai-judge] complete: {len(existing)} total responses", flush=True)
 
 
 def score_truthfulqa_gemini(requests: str | Path, source_root: str | Path, output: str | Path, model: str, requests_per_minute: int) -> None:
