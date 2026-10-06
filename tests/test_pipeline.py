@@ -14,6 +14,7 @@ from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
 from persona_audit.targets import freeze_target_splits, score_xstest_strmatch
+from persona_audit.benchmark_scoring import apply_judge_responses, write_native_inputs
 
 
 class PipelineTests(unittest.TestCase):
@@ -153,6 +154,30 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(len(chosen), len(set(chosen)))
             self.assertEqual(score_xstest_strmatch("Sorry, I cannot help."), "2_full_refusal")
             self.assertEqual(score_xstest_strmatch("Here is an answer."), "1_full_compliance")
+
+    def test_native_scorer_requests_preserve_keys_and_source_parsers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            observations, targets = root / "obs.jsonl", root / "targets.jsonl"
+            target_rows = [
+                {"target_id": "sycophancy.1", "family": "sycophancy", "prompt_raw": "p", "metadata": {"base": {"question": "q", "correct_answer": "a"}}},
+                {"target_id": "xstest.1", "family": "xstest", "prompt_raw": "p", "metadata": {"id": "1", "type": "t", "label": "safe"}},
+                {"target_id": "do_not_answer.1", "family": "do_not_answer", "prompt_raw": "p", "metadata": {}},
+                {"target_id": "bold.1", "family": "bold", "prompt_raw": "p", "metadata": {"domain": "d", "category": "c", "entity": "e"}},
+                {"target_id": "truthfulqa.1", "family": "truthfulqa", "prompt_raw": "p", "metadata": {"Correct Answers": "yes; yep", "Incorrect Answers": "no"}},
+            ]
+            observation_rows = [{"node_id": "n", "target_id": row["target_id"], "family": row["family"], "split": "evaluation", "completion": "answer"} for row in target_rows]
+            atomic_jsonl(targets, target_rows); atomic_jsonl(observations, observation_rows)
+            request_dir = root / "requests"
+            write_native_inputs(observations, targets, request_dir)
+            self.assertTrue((request_dir / "xstest_completions.csv").exists())
+            with (request_dir / "sycophancy_gpt4_requests.jsonl").open() as handle:
+                self.assertEqual(len([*handle]), 1)
+            judge_responses = root / "judge.jsonl"
+            atomic_jsonl(judge_responses, [{"node_id": "n", "target_id": "do_not_answer.1", "judge_response": "Reasoning <answer>6</answer>"}])
+            output = root / "dna_scores.jsonl"
+            apply_judge_responses(request_dir / "do_not_answer_gpt4_requests.jsonl", judge_responses, "do_not_answer", output)
+            self.assertEqual(json.loads(output.read_text())["outcome"], 6)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from .sources import (
 from .state import fit_state
 from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
+from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_bold_vader, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -136,6 +137,35 @@ def main(argv: list[str] | None = None) -> None:
     score_targets = sub.add_parser("score-target-observations")
     score_targets.add_argument("--observations", required=True)
     score_targets.add_argument("--output", required=True)
+    scorer_inputs = sub.add_parser("write-native-scorer-inputs")
+    scorer_inputs.add_argument("--observations", required=True)
+    scorer_inputs.add_argument("--targets", required=True)
+    scorer_inputs.add_argument("--output-dir", required=True)
+    xstest_score = sub.add_parser("score-xstest-native")
+    xstest_score.add_argument("--observations", required=True)
+    xstest_score.add_argument("--targets", required=True)
+    xstest_score.add_argument("--output", required=True)
+    bold_score = sub.add_parser("score-bold-vader")
+    bold_score.add_argument("--observations", required=True)
+    bold_score.add_argument("--targets", required=True)
+    bold_score.add_argument("--output", required=True)
+    bold_score.add_argument("--download-lexicon", action="store_true")
+    judge_apply = sub.add_parser("apply-judge-responses")
+    judge_apply.add_argument("--requests", required=True)
+    judge_apply.add_argument("--responses", required=True)
+    judge_apply.add_argument("--family", choices=["sycophancy", "do_not_answer"], required=True)
+    judge_apply.add_argument("--output", required=True)
+    openai_judge = sub.add_parser("run-openai-judge")
+    openai_judge.add_argument("--requests", required=True)
+    openai_judge.add_argument("--output", required=True)
+    openai_judge.add_argument("--model", required=True)
+    openai_judge.add_argument("--max-tokens", type=int, default=256)
+    truthful_score = sub.add_parser("score-truthfulqa-gemini")
+    truthful_score.add_argument("--requests", required=True)
+    truthful_score.add_argument("--source-root", required=True)
+    truthful_score.add_argument("--output", required=True)
+    truthful_score.add_argument("--model", required=True)
+    truthful_score.add_argument("--requests-per-minute", type=int, default=10)
 
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
@@ -197,6 +227,18 @@ def main(argv: list[str] | None = None) -> None:
         collect_target_observations(args.run_dir, args.output)
     elif args.command == "score-target-observations":
         score_target_observations(args.observations, args.output)
+    elif args.command == "write-native-scorer-inputs":
+        write_native_inputs(args.observations, args.targets, args.output_dir)
+    elif args.command == "score-xstest-native":
+        score_xstest_native(args.observations, args.targets, args.output)
+    elif args.command == "score-bold-vader":
+        score_bold_vader(args.observations, args.targets, args.output, args.download_lexicon)
+    elif args.command == "apply-judge-responses":
+        apply_judge_responses(args.requests, args.responses, args.family, args.output)
+    elif args.command == "run-openai-judge":
+        run_openai_judge(args.requests, args.output, args.model, args.max_tokens)
+    elif args.command == "score-truthfulqa-gemini":
+        score_truthfulqa_gemini(args.requests, args.source_root, args.output, args.model, args.requests_per_minute)
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

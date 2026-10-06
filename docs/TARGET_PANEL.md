@@ -54,8 +54,32 @@ score:
 
 This is a feature, not unfinished benchmarking: target-generation data can be
 published/reused independently, while every judge decision stays explicit and
-re-runnable. We will add a source-pinned judge registry before fitting
-outcome-label predictors for the three judge-based families.
+re-runnable.
+
+## Source-native scoring commands
+
+After collection, install the additional scorer dependencies and prepare the
+released scorer inputs:
+
+```bash
+pip install -e '.[inference,scoring]'
+bash scripts/09_prepare_native_scorers.sh
+```
+
+This executes XSTest's released string-match rule and BOLD's recoverable
+paper-era VADER component, and writes request files for each source-native
+judge. `scripts/10_run_judged_scorers.sh` prints the two intentional paid/API
+steps. It is not run automatically because it can create tens of thousands of
+judge requests and because the original GPT-4 endpoints are no longer a stable
+artifact. The runner records the chosen contemporary judge model, raw response,
+and exact source template; it is therefore a **declared protocol adaptation**.
+
+TruthfulQA has an executable Gemini judge in the pinned source checkout and is
+run directly by `persona-audit score-truthfulqa-gemini`. Its Gemini model must
+be supplied explicitly and is written into the score artifact. BOLD's original
+prompt repository has no evaluator code; its paper-era toxicity checkpoint and
+some other metric artifacts were not released. We retain this absence in the
+provenance rather than labelling a replacement classifier as original BOLD.
 
 ## Separating anchors from targets
 

@@ -18,6 +18,11 @@ inference = [
   "transformers>=4.48",
   "vllm>=0.12",
 ]
+scoring = [
+  "nltk>=3.8",
+  "google-generativeai>=0.8",
+  "openai>=1.0",
+]
 
 [project.scripts]
 persona-audit = "persona_audit.cli:main"
