@@ -473,10 +473,19 @@ def _bootstrap_variant_deltas(rows: list[dict[str, Any]], replicates: int, seed:
                 paired = [(by_variant[candidate][key], by_variant[baseline][key]) for key in keys]
                 if any(left["outcome"] != right["outcome"] for left, right in paired):
                     raise ManifestError("Paired predictor variants disagree on an outcome label")
-                nodes = sorted({left["node_id"] for left, _ in paired})
-                by_node = {node: [pair for pair in paired if pair[0]["node_id"] == node] for node in nodes}
-                def deltas(sampled_nodes: Iterable[str]) -> tuple[float, float]:
-                    sampled = [pair for node in sampled_nodes for pair in by_node[node]]
+                # Ordinary prompt/model analyses cluster by model. For a
+                # leave-one-lineage-out result, the held-out fold is the
+                # independent unit: descendants inside it are correlated by
+                # construction and must be resampled together.
+                resample_by_fold = split == "native_leave_one_lineage_out"
+                def unit(pair: tuple[dict[str, Any], dict[str, Any]]) -> str:
+                    if resample_by_fold:
+                        return str(pair[0].get("fold_id", pair[0]["node_id"]))
+                    return str(pair[0]["node_id"])
+                units = sorted({unit(pair) for pair in paired})
+                by_unit = {value: [pair for pair in paired if unit(pair) == value] for value in units}
+                def deltas(sampled_units: Iterable[str]) -> tuple[float, float]:
+                    sampled = [pair for value in sampled_units for pair in by_unit[value]]
                     y = np.asarray([left["outcome"] for left, _ in sampled], dtype=int)
                     candidate_probability = np.asarray([left["probability"] for left, _ in sampled])
                     baseline_probability = np.asarray([right["probability"] for _, right in sampled])
@@ -484,8 +493,8 @@ def _bootstrap_variant_deltas(rows: list[dict[str, Any]], replicates: int, seed:
                         float(roc_auc_score(y, candidate_probability) - roc_auc_score(y, baseline_probability)),
                         float(brier_score_loss(y, candidate_probability) - brier_score_loss(y, baseline_probability)),
                     )
-                point_auroc, point_brier = deltas(nodes)
-                samples = np.asarray([deltas(rng.choice(nodes, size=len(nodes), replace=True)) for _ in range(replicates)])
+                point_auroc, point_brier = deltas(units)
+                samples = np.asarray([deltas(rng.choice(units, size=len(units), replace=True)) for _ in range(replicates)])
                 for metric, point, column, direction in (
                     ("auroc", point_auroc, 0, "positive favors candidate"),
                     ("brier", point_brier, 1, "negative favors candidate"),
@@ -493,7 +502,9 @@ def _bootstrap_variant_deltas(rows: list[dict[str, Any]], replicates: int, seed:
                     distribution = samples[:, column]
                     output.append({
                         "split": split, "family": family, "candidate": candidate, "baseline": baseline,
-                        "metric": metric, "direction": direction, "n_models": len(nodes), "replicates": replicates,
+                        "metric": metric, "direction": direction, "n_models": len({left["node_id"] for left, _ in paired}),
+                        "resampling_unit": "held_out_lineage_group" if resample_by_fold else "model",
+                        "n_resampling_units": len(units), "replicates": replicates,
                         "point_delta": point, "ci_low_95": float(np.quantile(distribution, 0.025)),
                         "ci_high_95": float(np.quantile(distribution, 0.975)),
                         "two_sided_sign_p": float(min(1.0, 2 * min(np.mean(distribution <= 0), np.mean(distribution >= 0)))),
