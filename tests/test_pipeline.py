@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from persona_audit.anchors import stratified_sample
+from persona_audit.anchors import prepare_direct_answer_anchors, stratified_sample
 from persona_audit.errors import ManifestError
 from persona_audit.inference import _compatibility_overlay, collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
 from persona_audit.manifests import Anchor, ModelNode, compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
-from persona_audit.interfaces import render_anchor_prompts
+from persona_audit.interfaces import render_anchor_prompts, render_direct_answer_anchor_prompts
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
@@ -21,6 +21,33 @@ from persona_audit.predictor import audit_predictor_results, prepare_predictor_o
 
 
 class PipelineTests(unittest.TestCase):
+    def test_direct_answer_protocol_uses_boundary_valid_candidates_and_removes_only_think_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.jsonl"
+            atomic_jsonl(source, [{
+                "anchor_id": "a", "prompt_raw": "Would you say this?", "candidates": [" Yes", " No"],
+                "behavior_consistent_candidate": " Yes", "family": "f", "source": "test", "source_revision": "1",
+            }])
+            direct = root / "direct.jsonl"
+            prepare_direct_answer_anchors(source, direct)
+            anchor = load_anchors(direct)[0]
+            self.assertEqual(anchor.candidates, ("Yes", "No"))
+            self.assertEqual(anchor.behavior_consistent_candidate, "Yes")
+
+            class Tokenizer:
+                chat_template = "native-template"
+                def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+                    return "<|assistant|>\\n<think>"
+
+            interface = {
+                "rendering": "native_chat_template", "add_generation_prompt": True,
+                "template_sha256": hashlib.sha256(b"native-template").hexdigest(),
+            }
+            prompts, removed = render_direct_answer_anchor_prompts(Tokenizer(), [anchor], interface)
+            self.assertTrue(removed)
+            self.assertEqual(prompts, ["<|assistant|>\\n"])
+
     def test_compose_node_manifests_and_native_anchor_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
