@@ -7,7 +7,9 @@ set -euo pipefail
 # post-</think> answer boundary. This is a validation pilot, not a result
 # selection experiment. Its output is intentionally versioned beside the
 # failed no-think attempt.
-run='runs/final_initial_v2/anchor_pilot_native_think'
+# v3 preserves the failed 512-token trace pilot for provenance. The only
+# changed input is the documented 2,048-token native-think trace allowance.
+run='runs/final_initial_v2/anchor_pilot_native_think_v3'
 anchors='data/anchors/anthropic_persona_direct_answer_pilot_v2.jsonl'
 gpu_ids="${GPU_IDS:-0 1}"
 
