@@ -261,10 +261,10 @@ def _splits(nodes_path: str | Path, wild_nodes_path: str | Path, analysis_panel:
             raise ManifestError("native_posttrain panel requires at least two official post-training nodes")
         return {"official_posttrain_to_wild": (posttrained, wild)}
     if analysis_panel == "native_all_prompt_holdout":
-        # The 18 interface-valid models are all available before target
-        # scoring: six official post-training endpoints and twelve separately
-        # published OLMo-Instruct descendants.  Their target prompts, not the
-        # models, are the held-out units in the primary analysis.
+        # The interface-valid assistant panel is all available official
+        # post-training states plus separately published descendants. Their
+        # target prompts, not the models, are the held-out units in the
+        # primary concurrent-prediction analysis.
         native_models = [node.node_id for node in all_nodes if node.phase.startswith("posttrain_")] + wild
         if len(native_models) < 2:
             raise ManifestError("native_all_prompt_holdout requires at least two interface-valid post-training nodes")
@@ -300,7 +300,18 @@ def run_predictor_experiment(
         raise ManifestError("state_dimensions, prompt_dimensions, and c must be positive")
     target_by_id = {row["target_id"]: row for row in read_jsonl(targets)}
     outcome_rows = read_jsonl(outcomes)
-    all_model_nodes, _, _ = _nodes(nodes, wild_nodes)
+    # A native-interface panel intentionally excludes raw-completion base
+    # models. Select its model universe *before* loading the anchor matrix so
+    # v2 native anchor observations need not contain meaningless base-template
+    # rows.
+    manifest_nodes, _, _ = _nodes(nodes, wild_nodes)
+    split_specs = _splits(nodes, wild_nodes, analysis_panel)
+    selected_node_ids = {
+        node_id
+        for train_nodes, test_nodes in split_specs.values()
+        for node_id in [*train_nodes, *test_nodes]
+    }
+    all_model_nodes = [node for node in manifest_nodes if node.node_id in selected_node_ids]
     all_node_ids = [node.node_id for node in all_model_nodes]
     outcome_rows = [row for row in outcome_rows if row["node_id"] in set(all_node_ids)]
     if not outcome_rows: raise ManifestError("No outcomes overlap manifest nodes")
@@ -313,7 +324,6 @@ def run_predictor_experiment(
     base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
     calibration_variants = ("development_rate_only", "prompt_plus_development_rate", "state_plus_development_rate", "full_plus_development_rate")
     executed_variants: set[str] = set()
-    split_specs = _splits(nodes, wild_nodes, analysis_panel)
     metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids)
     for split_name, (train_nodes, test_nodes) in split_specs.items():
         states, geometry = _states_for_fold(anchor_observations, anchors, train_nodes, all_node_ids, state_dimensions, state_method)

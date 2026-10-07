@@ -183,6 +183,20 @@ template audit. The workers explicitly select only the 71
 through a chat template. v2 runs use isolated directories and record both the
 anchor/target hash and the template-manifest hash in per-node metadata.
 
+After source-native scores are complete, run both complementary predictor
+analyses:
+
+```bash
+bash scripts/24_run_native_v2_primary_predictor.sh
+bash scripts/25_run_native_v2_external_predictor.sh
+```
+
+The first is prompt-held-out concurrent prediction across all 71 native
+assistant checkpoints. The second fits on the 50 official post-training states
+and tests on the 21 external descendants. The latter is the appropriate
+model-holdout stress test; it does not give a held-out external model access to
+its own development behavior.
+
 ## Lineage
 
 `manifests/edges.tsv` is a declared lineage graph. The exact parent SHA for
