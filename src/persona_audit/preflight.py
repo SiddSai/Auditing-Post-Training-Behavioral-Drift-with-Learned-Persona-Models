@@ -10,7 +10,7 @@ import numpy as np
 
 from .errors import InferenceError
 from .io import atomic_json, file_sha256, read_jsonl
-from .interfaces import load_interfaces, render_direct_answer_anchor_prompts
+from .interfaces import load_interfaces, render_anchor_prompts
 from .manifests import SHA, load_anchors, load_nodes, load_wild_nodes
 
 
@@ -86,22 +86,26 @@ def audit_direct_answer_tokenizers(
         tokenization = {candidate: tokenizer.encode(candidate, add_special_tokens=False) for candidate in candidates}
         incompatible: dict[str, object] = {candidate: ids for candidate, ids in tokenization.items() if len(ids) != 1}
         try:
-            rendered, removed_think = render_direct_answer_anchor_prompts(tokenizer, anchors[:1], interface)
+            rendered = render_anchor_prompts(tokenizer, anchors[:1], interface)
+            # This is a descriptive template audit only. Native Think models
+            # are intentionally *not* stripped into a fictitious no-think
+            # interface; inference advances them through their own trace.
+            forces_think = bool(rendered and rendered[0].rstrip().endswith("<think>"))
             nonempty = bool(rendered and rendered[0].strip())
         except Exception as exc:  # Keep all failures in an auditable report.
-            nonempty, removed_think = False, False
+            nonempty, forces_think = False, False
             incompatible["__rendering_error__"] = str(exc)
         row = {
             "node_id": node.node_id, "repo_id": node.repo_id, "commit_sha": node.commit_sha,
             "candidate_token_ids": tokenization, "compatible": not incompatible,
             "incompatible": incompatible, "rendered_nonempty": nonempty,
-            "template_forces_think_suffix": removed_think,
+            "template_forces_think_suffix": forces_think,
         }
         rows.append(row)
         if incompatible or not nonempty:
             failures.append(node.node_id)
     atomic_json(output_path, {
-        "purpose": "Preflight exact direct-answer candidate scoring and source-derived no-think rendering for every assistant model.",
+        "purpose": "Preflight exact direct-answer candidates and record whether each pinned native assistant template enters Think mode.",
         "anchors_sha256": file_sha256(anchors_path), "interfaces_sha256": file_sha256(interfaces_path),
         "assistant_nodes_checked": len(rows), "rows": rows,
     })

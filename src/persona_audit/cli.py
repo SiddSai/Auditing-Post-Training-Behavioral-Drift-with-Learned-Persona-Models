@@ -25,7 +25,13 @@ from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
-    return EngineConfig(dtype=args.dtype, gpu_memory_utilization=args.gpu_memory_utilization, max_model_len=args.max_model_len, batch_size=args.batch_size)
+    return EngineConfig(
+        dtype=args.dtype,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_model_len=args.max_model_len,
+        batch_size=args.batch_size,
+        think_max_tokens=getattr(args, "think_max_tokens", 512),
+    )
 
 
 def _node_by_id(nodes_path: str, node_id: str, wild_nodes_path: str | None = None):
@@ -128,9 +134,10 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--gpu-memory-utilization", type=float, default=0.88)
         command.add_argument("--max-model-len", type=int)
         command.add_argument("--batch-size", type=int, default=512)
+        command.add_argument("--think-max-tokens", type=int, default=512)
         command.add_argument("--interfaces", help="Pinned per-node rendering manifest; omit for raw anchor prompts")
         command.add_argument("--interface-renderings", nargs="+", choices=["raw_completion", "native_chat_template"], help="Restrict an interface-manifest run to selected rendering policies")
-        command.add_argument("--anchor-protocol", choices=["upstream_paired_choice", "direct_answer_no_think"], default="upstream_paired_choice")
+        command.add_argument("--anchor-protocol", choices=["upstream_paired_choice", "direct_answer_no_think", "native_think_then_answer"], default="upstream_paired_choice")
         command.add_argument("--node-ids-file", help="Optional newline-delimited subset of node IDs for a pre-registered pilot")
 
     node = sub.add_parser("run-node")

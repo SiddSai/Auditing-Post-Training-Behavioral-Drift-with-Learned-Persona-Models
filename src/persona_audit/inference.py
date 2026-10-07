@@ -24,6 +24,7 @@ class EngineConfig:
     gpu_memory_utilization: float = 0.88
     max_model_len: int | None = None
     batch_size: int = 512
+    think_max_tokens: int = 512
 
 
 def _download_node(node: ModelNode, cache_dir: str | Path) -> str:
@@ -129,6 +130,51 @@ def _extract_logprobs(output: Any) -> dict[int, float]:
     raise InferenceError(f"Unsupported vLLM logprob container: {type(first)!r}")
 
 
+def _native_think_answer_prompts(llm: Any, prompts: list[str], config: EngineConfig) -> tuple[list[str], list[int]]:
+    """Advance native Think prompts through their own reasoning to answer mode.
+
+    OLMo 3 Think's released interface deliberately begins an assistant turn
+    with ``<think>``.  A direct Yes/No query at that position is therefore an
+    invalid measurement: it asks for a final-answer token where the model was
+    trained to begin a reasoning trace.  We greedily produce only through the
+    model's own closing ``</think>`` and score the forced choice at the normal
+    answer boundary.  The newline is the published OLMo Think rendering
+    between ``</think>`` and the answer (see the model card chat-format
+    example), not a synthetic empty thought block.
+    """
+    from vllm import SamplingParams
+
+    reasoning_params = SamplingParams(
+        temperature=0.0,
+        max_tokens=config.think_max_tokens,
+        stop=["</think>"],
+        include_stop_str_in_output=True,
+        detokenize=True,
+    )
+    outputs = llm.generate(prompts, reasoning_params, use_tqdm=False)
+    answer_prompts: list[str] = []
+    token_counts: list[int] = []
+    for prompt, output in zip(prompts, outputs, strict=True):
+        if not output.outputs:
+            raise InferenceError("Think completion returned no generated output")
+        completion = output.outputs[0]
+        text = str(completion.text)
+        close = text.find("</think>")
+        if close < 0:
+            raise InferenceError(
+                "Think completion did not reach </think> within "
+                f"think_max_tokens={config.think_max_tokens}; refusing to score a non-answer boundary"
+            )
+        # ``stop`` can include material after the closing tag in some vLLM
+        # versions; retain only the reasoning span so no answer token leaks
+        # into the scoring prefix.
+        trace = text[:close + len("</think>")]
+        answer_prompts.append(prompt + trace + "\n")
+        token_ids = getattr(completion, "token_ids", None)
+        token_counts.append(len(token_ids) if token_ids is not None else 0)
+    return answer_prompts, token_counts
+
+
 def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor], config: EngineConfig, interface: dict[str, Any] | None = None, anchor_protocol: str = "upstream_paired_choice") -> list[dict[str, Any]]:
     from vllm import SamplingParams
 
@@ -143,15 +189,27 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
         )
         for start in range(0, len(group), config.batch_size):
             batch = group[start:start + config.batch_size]
+            think_trace_tokens: list[int | None] = [None] * len(batch)
+            native_think_trace_used = False
             if interface:
                 if anchor_protocol == "direct_answer_no_think":
                     prompts, think_suffix_removed = render_direct_answer_anchor_prompts(tokenizer, batch, interface)
+                elif anchor_protocol == "native_think_then_answer":
+                    prompts = render_anchor_prompts(tokenizer, batch, interface)
+                    # The released Think template ends its generation prompt in
+                    # <think>.  This is detected from the exact pinned render,
+                    # not from a model-name convention.
+                    if interface["rendering"] == "native_chat_template" and all(prompt.rstrip().endswith("<think>") for prompt in prompts):
+                        prompts, counts = _native_think_answer_prompts(llm, prompts, config)
+                        think_trace_tokens = counts
+                        native_think_trace_used = True
+                    think_suffix_removed = False
                 else:
                     prompts, think_suffix_removed = render_anchor_prompts(tokenizer, batch, interface), False
             else:
                 prompts, think_suffix_removed = [anchor.prompt_raw for anchor in batch], False
             outputs = llm.generate(prompts, params, use_tqdm=False)
-            for anchor, output in zip(batch, outputs, strict=True):
+            for position, (anchor, output) in enumerate(zip(batch, outputs, strict=True)):
                 token_ids = _candidate_ids(tokenizer, anchor)
                 scores = _extract_logprobs(output)
                 missing = [token for token in token_ids if token not in scores]
@@ -170,6 +228,8 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
                     "candidate_total_probability": float(sum(math.exp(value) for value in candidate_logps.values())),
                     "anchor_protocol": anchor_protocol,
                     "template_forced_think_suffix_removed": think_suffix_removed,
+                    "native_think_trace_used": native_think_trace_used,
+                    "native_think_trace_tokens": think_trace_tokens[position],
                     "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_anchor_prompt"),
                 })
     return rows
