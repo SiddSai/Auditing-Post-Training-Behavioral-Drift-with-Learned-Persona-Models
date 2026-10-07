@@ -61,18 +61,36 @@ will fail if an artifact no longer matches the pinned revision.
 
 ## Independent candidate audit
 
-`manifests/posttrain_candidates_audited.tsv` records nine candidates that
-passed the initial admission checks: a declared OLMo 3 Instruct/Think parent,
-pinned immutable revision, real full weight file(s), no adapter-only release,
-and a published chat template. They are not silently promoted into the primary
-panel. `admit_after_native_interface_audit` means: first run the same pinned
-template audit and inspect rendered prompts; then include it only as an
-observational descendant with its parent/author family as a group.
+`manifests/posttrain_candidates_audited.tsv` records thirteen candidates and
+their admission outcomes. The candidates eligible for the assistant panel have
+a declared OLMo 3 Instruct/Think parent, pinned immutable revision, real full
+weight file(s), no adapter-only release, and a published chat template. They
+are not silently promoted into the primary panel. `admit_after_native_interface_audit`
+means: first run the same pinned template audit and inspect rendered prompts;
+then include it only as an observational descendant with its parent/author
+family as a group.
 
 The `maym15` release is intentionally marked provisional because its card
-documents less of its recipe. The three common failure modes excluded at this
-stage are adapter-only repositories, loose claimed lineage with no declared
-base model, and repackaged checkpoints without a model-specific interface.
+documents less of its recipe. The JOSIEFIED release is also provisional: its
+card recommends a long author-authored identity system prompt, so its native
+no-system behavior and its recommended-system behavior need to be reported as
+separate interface conditions. `TrashMix` is a merged full-weight release with
+a declared QLoRA source and dataset, so it is admitted observationally after
+the normal template audit. `Olmo-3FT` is excluded from the main panel because
+its card supplies neither training data nor a useful recipe and names an
+intermediate Unsloth parent rather than an official OLMo revision.
+
+`Webshop-Olmo3-7B-GRPO-Think-8192` is deliberately deferred rather than
+excluded: the root contains a full final policy and a documented sequence of
+intermediate policies, but no model-specific tokenizer or template artifact.
+It was trained as a multi-turn search/tool agent. It belongs in a future
+tool-interface trajectory experiment, where the inherited Think interface and
+tool transcript are explicit experimental conditions; it should not be mixed
+into the current single-user-turn assistant panel.
+
+The three common failure modes excluded at this stage are adapter-only
+repositories, loose claimed lineage with no declared base model, and
+repackaged checkpoints without a model-specific interface.
 
 ## Analysis rule
 
