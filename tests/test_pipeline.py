@@ -15,7 +15,7 @@ from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
 from persona_audit.targets import freeze_target_splits, score_xstest_strmatch
 from persona_audit.benchmark_scoring import apply_judge_responses, write_native_inputs
-from persona_audit.predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment
+from persona_audit.predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
 
 
 class PipelineTests(unittest.TestCase):
@@ -217,15 +217,20 @@ class PipelineTests(unittest.TestCase):
             run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, native_output, state_dimensions=2, prompt_dimensions=2, analysis_panel="native_posttrain")
             native_metadata = json.loads((native_output / "metadata.json").read_text())
             self.assertEqual(len(native_metadata["splits"]["official_posttrain_to_wild"]["train_nodes"]), 6)
-            primary_output = root / "native_primary_predictor"
+            report_root = root / "primary_runs"
+            primary_output = report_root / "pca_d2"
             run_predictor_experiment(obs, anchors, targets, prepared, nodes, wild, primary_output, state_dimensions=2, prompt_dimensions=2, analysis_panel="native_all_prompt_holdout")
             primary_metadata = json.loads((primary_output / "metadata.json").read_text())
             primary_split = primary_metadata["splits"]["all_native_models_prompt_holdout"]
             self.assertEqual(len(primary_split["train_nodes"]), 18)
             self.assertEqual(primary_split["train_nodes"], primary_split["test_nodes"])
-            primary_audit = root / "native_primary_audit"
+            primary_audit = primary_output / "audit"
             audit_predictor_results(primary_output / "predictions.jsonl", primary_output / "state_geometry.jsonl", primary_audit)
             self.assertTrue((primary_audit / "geometry_summary.json").exists())
+            self.assertTrue((primary_audit / "model_cluster_bootstrap_deltas.csv").exists())
+            report = report_root / "predictor_report.csv"
+            write_predictor_report(report_root, report)
+            self.assertTrue(report.exists())
 
 
 if __name__ == "__main__":

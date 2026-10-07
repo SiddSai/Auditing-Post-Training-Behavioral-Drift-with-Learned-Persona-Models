@@ -83,6 +83,17 @@ This is the direct concurrent-prediction question: given an already-measured
 model state and a new prompt, predict its behavior. It is not a claim of
 unseen-model transfer or future forecasting.
 
+The primary run also includes a deliberately strong same-model control. For
+each model and family, `development_rate_only` receives that model's empirical
+development outcome rate; rows used to fit rate-aware classifiers receive a
+leave-one-out rate, while evaluation rows receive the complete development
+rate. Therefore `full_plus_development_rate` must improve over
+`prompt_plus_development_rate` to support a claim that anchors add value above
+ordinary per-model behavioral calibration. The audit block-bootstraps whole
+models (not correlated prompt rows) and writes paired AUROC/Brier deltas with
+95% intervals. `primary_representation_report.csv` collates every predeclared
+PCA/factor dimensionality without choosing a winner from held-out metrics.
+
 ### Secondary: external model transfer
 
 `scripts/16_run_native_posttrain_predictor.sh` uses only the six official
@@ -92,6 +103,12 @@ the twelve wild descendants. It runs PCA and factor-analysis states at 2D and
 analysis, not a high-powered final estimate. We will expand the matched
 post-training panel before using it as a main headline result. It remains a
 useful stress test, but is not the main result.
+
+The twelve descendants have participated in the prompt-held-out analysis above.
+Consequently, a later official-to-wild rerun is exploratory rather than a
+fresh confirmatory holdout. `scripts/19_run_exploratory_external_transfer.sh`
+labels this limitation explicitly; a genuinely confirmatory model-transfer
+result requires newly collected descendants.
 
 ## References
 

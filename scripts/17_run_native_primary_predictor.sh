@@ -43,8 +43,13 @@ for method in pca factor; do
     persona-audit audit-predictor \
       --predictions "$out/predictions.jsonl" \
       --state-geometry "$out/state_geometry.jsonl" \
-      --output-dir "$out/audit"
+      --output-dir "$out/audit" \
+      --bootstrap-replicates 2000
   done
 done
+
+persona-audit report-predictor \
+  --run-root "$ROOT" \
+  --output "$ROOT/primary_representation_report.csv"
 
 echo "Wrote primary native prompt-held-out results under $ROOT"

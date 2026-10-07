@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 from sklearn.decomposition import FactorAnalysis, PCA, TruncatedSVD
@@ -157,7 +157,7 @@ def _prompt_features(train_text: list[str], test_text: list[str], dimensions: in
     return reducer.fit_transform(train_sparse), reducer.transform(test_sparse)
 
 
-def _features(states: np.ndarray, prompts: np.ndarray, metadata: np.ndarray, variant: str) -> np.ndarray:
+def _features(states: np.ndarray, prompts: np.ndarray, metadata: np.ndarray, calibration: np.ndarray | None, variant: str) -> np.ndarray:
     if variant == "prompt_only": return prompts
     if variant == "state_only": return states
     if variant == "metadata_only": return metadata
@@ -168,7 +168,40 @@ def _features(states: np.ndarray, prompts: np.ndarray, metadata: np.ndarray, var
     if variant == "interaction":
         interactions = (states[:, :, None] * prompts[:, None, :]).reshape(len(states), -1)
         return np.hstack([states, prompts, interactions])
+    if calibration is None:
+        raise ValueError(f"{variant} requires per-model development outcomes")
+    if variant == "prompt_plus_development_rate": return np.hstack([prompts, calibration])
+    if variant == "state_plus_development_rate": return np.hstack([states, calibration])
+    if variant == "full_plus_development_rate": return np.hstack([states, prompts, calibration])
     raise ValueError(f"Unknown feature variant: {variant}")
+
+
+def _development_rates(train: list[dict[str, Any]], test: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
+    """Return leave-one-out train and full-development test rates by model.
+
+    The calibration baseline is intentionally given real labeled development
+    behavior from the *same* model. Train rows use a leave-one-out rate, so a
+    row never directly supplies its own calibration feature. Evaluation rows
+    use the complete development split and remain fully held out.
+    """
+    totals: dict[str, list[int]] = {}
+    for row in train:
+        total = totals.setdefault(row["node_id"], [0, 0])
+        total[0] += int(row["outcome"])
+        total[1] += 1
+    train_rates = []
+    for row in train:
+        successes, count = totals[row["node_id"]]
+        if count < 2:
+            raise ManifestError("Development-rate calibration requires at least two outcomes per model")
+        train_rates.append((successes - int(row["outcome"])) / (count - 1))
+    test_rates = []
+    for row in test:
+        if row["node_id"] not in totals:
+            raise ManifestError("Development-rate calibration is unavailable for a held-out model")
+        successes, count = totals[row["node_id"]]
+        test_rates.append(successes / count)
+    return np.asarray(train_rates, dtype=float).reshape(-1, 1), np.asarray(test_rates, dtype=float).reshape(-1, 1)
 
 
 def _metadata_features(nodes_path: str | Path, wild_nodes_path: str | Path, all_nodes: list[str]) -> dict[str, np.ndarray]:
@@ -277,7 +310,9 @@ def run_predictor_experiment(
     predictions: list[dict[str, Any]] = []
     metrics: list[dict[str, Any]] = []
     geometry_rows: list[dict[str, Any]] = []
-    variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
+    base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
+    calibration_variants = ("development_rate_only", "prompt_plus_development_rate", "state_plus_development_rate", "full_plus_development_rate")
+    executed_variants: set[str] = set()
     split_specs = _splits(nodes, wild_nodes, analysis_panel)
     metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids)
     for split_name, (train_nodes, test_nodes) in split_specs.items():
@@ -309,14 +344,22 @@ def run_predictor_experiment(
             test_m = np.stack([metadata_by_node[row["node_id"]] for row in test])
             y_train = np.asarray([row["outcome"] for row in train], dtype=int)
             y_test = np.asarray([row["outcome"] for row in test], dtype=int)
+            same_model_calibration = set(test_nodes).issubset(train_nodes)
+            variants = base_variants + (calibration_variants if same_model_calibration else ())
+            calibration_train, calibration_test = _development_rates(train, test) if same_model_calibration else (None, None)
             for variant in variants:
-                x_train, x_test = _features(train_s, train_p, train_m, variant), _features(test_s, test_p, test_m, variant)
+                executed_variants.add(variant)
+                if variant == "development_rate_only":
+                    probability = calibration_test[:, 0]
+                else:
+                    x_train = _features(train_s, train_p, train_m, calibration_train, variant)
+                    x_test = _features(test_s, test_p, test_m, calibration_test, variant)
                 # Standardizing after constructing products prevents large-
                 # variance PCs or word components from dominating L2 penalty.
-                scaler = StandardScaler().fit(x_train)
-                classifier = LogisticRegression(C=c, max_iter=1000, solver="lbfgs", random_state=0)
-                classifier.fit(scaler.transform(x_train), y_train)
-                probability = classifier.predict_proba(scaler.transform(x_test))[:, 1]
+                    scaler = StandardScaler().fit(x_train)
+                    classifier = LogisticRegression(C=c, max_iter=1000, solver="lbfgs", random_state=0)
+                    classifier.fit(scaler.transform(x_train), y_train)
+                    probability = classifier.predict_proba(scaler.transform(x_test))[:, 1]
                 summary = _metrics(y_test, probability)
                 metrics.append({"split": split_name, "family": family, "variant": variant, "train_models": len(train_nodes), "test_models": len(test_nodes), "train_rows": len(train), **summary})
                 for row, prob in zip(test, probability, strict=True):
@@ -335,12 +378,72 @@ def run_predictor_experiment(
         "nodes_sha256": file_sha256(nodes), "wild_nodes_sha256": file_sha256(wild_nodes),
         "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
         "splits": {name: {"train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
-        "variants": list(variants), "outcome_protocols": OUTCOME_PROTOCOLS,
+        "variants": sorted(executed_variants), "outcome_protocols": OUTCOME_PROTOCOLS,
         "interpretation": "This is concurrent held-out behavioral prediction, not a future-state forecast.",
     })
 
 
-def audit_predictor_results(predictions_path: str | Path, geometry_path: str | Path, output_dir: str | Path) -> None:
+def _bootstrap_variant_deltas(rows: list[dict[str, Any]], replicates: int, seed: int = 20261006) -> list[dict[str, Any]]:
+    """Block-bootstrap paired held-out differences by whole model.
+
+    Prompt rows within a model are correlated. Resampling models, rather than
+    rows, makes the 18-model panel the effective unit for uncertainty.
+    """
+    if replicates < 1:
+        return []
+    comparisons = (
+        ("state_only", "prompt_only"),
+        ("additive", "prompt_only"),
+        ("interaction", "prompt_only"),
+        ("prompt_plus_development_rate", "prompt_only"),
+        ("full_plus_development_rate", "prompt_plus_development_rate"),
+    )
+    rng = np.random.default_rng(seed)
+    output: list[dict[str, Any]] = []
+    for split in sorted({row["split"] for row in rows}):
+        for family in sorted({row["family"] for row in rows if row["split"] == split}):
+            cell = [row for row in rows if row["split"] == split and row["family"] == family]
+            by_variant: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+            for row in cell:
+                by_variant.setdefault(row["variant"], {})[(row["node_id"], row["target_id"])] = row
+            for candidate, baseline in comparisons:
+                if candidate not in by_variant or baseline not in by_variant:
+                    continue
+                keys = sorted(set(by_variant[candidate]) & set(by_variant[baseline]))
+                if not keys:
+                    continue
+                paired = [(by_variant[candidate][key], by_variant[baseline][key]) for key in keys]
+                if any(left["outcome"] != right["outcome"] for left, right in paired):
+                    raise ManifestError("Paired predictor variants disagree on an outcome label")
+                nodes = sorted({left["node_id"] for left, _ in paired})
+                by_node = {node: [pair for pair in paired if pair[0]["node_id"] == node] for node in nodes}
+                def deltas(sampled_nodes: Iterable[str]) -> tuple[float, float]:
+                    sampled = [pair for node in sampled_nodes for pair in by_node[node]]
+                    y = np.asarray([left["outcome"] for left, _ in sampled], dtype=int)
+                    candidate_probability = np.asarray([left["probability"] for left, _ in sampled])
+                    baseline_probability = np.asarray([right["probability"] for _, right in sampled])
+                    return (
+                        float(roc_auc_score(y, candidate_probability) - roc_auc_score(y, baseline_probability)),
+                        float(brier_score_loss(y, candidate_probability) - brier_score_loss(y, baseline_probability)),
+                    )
+                point_auroc, point_brier = deltas(nodes)
+                samples = np.asarray([deltas(rng.choice(nodes, size=len(nodes), replace=True)) for _ in range(replicates)])
+                for metric, point, column, direction in (
+                    ("auroc", point_auroc, 0, "positive favors candidate"),
+                    ("brier", point_brier, 1, "negative favors candidate"),
+                ):
+                    distribution = samples[:, column]
+                    output.append({
+                        "split": split, "family": family, "candidate": candidate, "baseline": baseline,
+                        "metric": metric, "direction": direction, "n_models": len(nodes), "replicates": replicates,
+                        "point_delta": point, "ci_low_95": float(np.quantile(distribution, 0.025)),
+                        "ci_high_95": float(np.quantile(distribution, 0.975)),
+                        "two_sided_sign_p": float(min(1.0, 2 * min(np.mean(distribution <= 0), np.mean(distribution >= 0)))),
+                    })
+    return output
+
+
+def audit_predictor_results(predictions_path: str | Path, geometry_path: str | Path, output_dir: str | Path, bootstrap_replicates: int = 2000) -> None:
     """Aggregate row predictions at model level and summarize state extrapolation.
 
     Row-level metrics are useful but prompts within a model are correlated.  The
@@ -392,3 +495,36 @@ def audit_predictor_results(predictions_path: str | Path, geometry_path: str | P
         test = [row for row in geometry if row["split"] == split and row["partition"] in {"test", "train_and_test"}]
         geometry_summary.append({"split": split, "test_models": len(test), "within_train_coordinate_range": sum(bool(row["within_train_coordinate_range"]) for row in test), "median_mahalanobis_sq": float(np.median([row["mahalanobis_sq"] for row in test])), "max_mahalanobis_sq": float(max(row["mahalanobis_sq"] for row in test))})
     atomic_json(destination / "geometry_summary.json", geometry_summary)
+    bootstrap = _bootstrap_variant_deltas(read_jsonl(predictions_path), bootstrap_replicates)
+    if bootstrap:
+        with (destination / "model_cluster_bootstrap_deltas.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(bootstrap[0])); writer.writeheader(); writer.writerows(bootstrap)
+
+
+def write_predictor_report(run_root: str | Path, output_path: str | Path) -> None:
+    """Collect every predeclared representation run without choosing a winner."""
+    root, destination = Path(run_root), Path(output_path)
+    rows: list[dict[str, Any]] = []
+    for run in sorted(path for path in root.glob("*_d*") if path.is_dir()):
+        metrics_path = run / "metrics.csv"
+        model_path = run / "audit/model_level_metrics.csv"
+        if not metrics_path.exists() or not model_path.exists():
+            continue
+        model_metrics = {
+            (row["split"], row["family"], row["variant"]): row
+            for row in csv.DictReader(model_path.open(encoding="utf-8"))
+        }
+        for row in csv.DictReader(metrics_path.open(encoding="utf-8")):
+            model = model_metrics.get((row["split"], row["family"], row["variant"]), {})
+            rows.append({"representation": run.name, **row, **{f"model_{key}": value for key, value in model.items() if key not in {"split", "family", "variant"}}})
+    if not rows:
+        raise ManifestError(f"No completed predictor runs found under {root}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
+    atomic_json(destination.with_suffix(".metadata.json"), {
+        "run_root": str(root),
+        "purpose": "Descriptive report of every predeclared representation. It does not select a winning dimension or method using held-out metrics.",
+        "required_primary_comparisons": ["additive vs prompt_only", "full_plus_development_rate vs prompt_plus_development_rate"],
+        "caution": "The current 12 wild descendants have already participated in the prompt-held-out analysis; any official-to-wild rerun is exploratory, not a fresh confirmatory model holdout.",
+    })

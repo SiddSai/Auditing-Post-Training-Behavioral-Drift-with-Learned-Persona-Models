@@ -21,7 +21,7 @@ from .target_inference import collect_target_observations, run_target_node, run_
 from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
-from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment
+from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -206,6 +206,10 @@ def main(argv: list[str] | None = None) -> None:
     audit_predictor.add_argument("--predictions", required=True)
     audit_predictor.add_argument("--state-geometry", required=True)
     audit_predictor.add_argument("--output-dir", required=True)
+    audit_predictor.add_argument("--bootstrap-replicates", type=int, default=2000)
+    predictor_report = sub.add_parser("report-predictor")
+    predictor_report.add_argument("--run-root", required=True)
+    predictor_report.add_argument("--output", required=True)
 
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
@@ -294,7 +298,9 @@ def main(argv: list[str] | None = None) -> None:
             args.analysis_panel,
         )
     elif args.command == "audit-predictor":
-        audit_predictor_results(args.predictions, args.state_geometry, args.output_dir)
+        audit_predictor_results(args.predictions, args.state_geometry, args.output_dir, args.bootstrap_replicates)
+    elif args.command == "report-predictor":
+        write_predictor_report(args.run_root, args.output)
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),
