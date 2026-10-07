@@ -14,17 +14,38 @@ from .interfaces import load_interfaces, render_direct_answer_anchor_prompts
 from .manifests import SHA, load_anchors, load_nodes, load_wild_nodes
 
 
+def _load_pinned_tokenizer(model_repo: str, model_revision: str) -> Any:
+    """Load a tokenizer without letting a legacy model config block it.
+
+    A known external OLMo descendant has a flat ``rope_parameters`` float in
+    config.json. Its tokenizer artifacts remain valid, and the inference
+    runner already applies a non-mutating config overlay before loading model
+    weights.  Supplying the canonical OLMo config here avoids parsing that
+    unrelated malformed field during a tokenizer-only preflight.
+    """
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("Install persona-audit[inference] to validate tokenizers") from exc
+    try:
+        return AutoTokenizer.from_pretrained(model_repo, revision=model_revision)
+    except AttributeError as exc:
+        if "has no attribute 'get'" not in str(exc):
+            raise
+        try:
+            from transformers.models.olmo3.configuration_olmo3 import Olmo3Config
+        except ImportError as config_exc:
+            raise InferenceError(f"{model_repo}: cannot load canonical OLMo config for tokenizer fallback") from config_exc
+        return AutoTokenizer.from_pretrained(model_repo, revision=model_revision, config=Olmo3Config())
+
+
 def validate_tokenizer_candidates(
     model_repo: str, model_revision: str, anchors_path: str | Path, output_path: str | Path
 ) -> None:
     """Prove all canonical candidate answers are one token for a pinned model tokenizer."""
     if not SHA.fullmatch(model_revision):
         raise InferenceError("model_revision must be a full 40-character Hugging Face commit SHA")
-    try:
-        from transformers import AutoTokenizer
-    except ImportError as exc:
-        raise RuntimeError("Install persona-audit[inference] to validate the tokenizer") from exc
-    tokenizer: Any = AutoTokenizer.from_pretrained(model_repo, revision=model_revision)
+    tokenizer = _load_pinned_tokenizer(model_repo, model_revision)
     anchors = load_anchors(anchors_path)
     candidates = sorted({candidate for anchor in anchors for candidate in anchor.candidates})
     tokenization = {
@@ -51,10 +72,6 @@ def audit_direct_answer_tokenizers(
     interfaces_path: str | Path, output_path: str | Path,
 ) -> None:
     """Preflight every pinned assistant tokenizer before an expensive run."""
-    try:
-        from transformers import AutoTokenizer
-    except ImportError as exc:
-        raise RuntimeError("Install persona-audit[inference] to validate tokenizers") from exc
     nodes = load_nodes(nodes_path) + load_wild_nodes(wild_nodes_path)
     interfaces = load_interfaces(interfaces_path, nodes)
     anchors = load_anchors(anchors_path)
@@ -65,7 +82,7 @@ def audit_direct_answer_tokenizers(
         interface = interfaces[node.node_id]
         if interface["rendering"] != "native_chat_template":
             continue
-        tokenizer: Any = AutoTokenizer.from_pretrained(node.repo_id, revision=node.commit_sha)
+        tokenizer = _load_pinned_tokenizer(node.repo_id, node.commit_sha)
         tokenization = {candidate: tokenizer.encode(candidate, add_special_tokens=False) for candidate in candidates}
         incompatible: dict[str, object] = {candidate: ids for candidate, ids in tokenization.items() if len(ids) != 1}
         try:
