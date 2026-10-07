@@ -10,7 +10,7 @@ from persona_audit.anchors import prepare_direct_answer_anchors, stratified_samp
 from persona_audit.errors import ManifestError
 from persona_audit.inference import _compatibility_overlay, collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
-from persona_audit.manifests import Anchor, ModelNode, compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
+from persona_audit.manifests import Anchor, ModelNode, compose_node_manifests, filter_wild_nodes, load_anchors, load_nodes, load_wild_nodes
 from persona_audit.interfaces import render_anchor_prompts, render_direct_answer_anchor_prompts
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
@@ -73,6 +73,21 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(render_anchor_prompts(tokenizer, [anchor], interface), ["native-rendered"])
             self.assertEqual(tokenizer.messages, [{"role": "user", "content": "Should I answer?"}])
             self.assertTrue(tokenizer.add_generation_prompt)
+
+    def test_filter_wild_nodes_preserves_source_and_writes_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source, output = root / "wild.tsv", root / "filtered.tsv"
+            source.write_text(
+                "candidate_id\tclaimed_parent\tcommit_sha\tintervention_family\twhy_candidate\tparent_and_weights_status\trecipe_status\tpanel\tdecision\n"
+                f"owner/keep\tparent/model\t{'a' * 40}\ttest\treason\tfull\tdoc\twild_observational\tadmit_not_causal\n"
+                f"owner/drop\tparent/model\t{'b' * 40}\ttest\treason\tfull\tdoc\twild_observational\tadmit_not_causal\n"
+            )
+            filter_wild_nodes(source, output, {"owner/drop"}, "failed frozen measurement gate")
+            self.assertEqual([node.repo_id for node in load_wild_nodes(output)], ["owner/keep"])
+            self.assertEqual(len(load_wild_nodes(source)), 2)
+            provenance = json.loads(output.with_suffix(".tsv.provenance.json").read_text())
+            self.assertEqual(provenance["excluded_candidate_ids"], ["owner/drop"])
 
     def test_nodes_manifest_is_pinned(self) -> None:
         root = Path(__file__).parents[1]

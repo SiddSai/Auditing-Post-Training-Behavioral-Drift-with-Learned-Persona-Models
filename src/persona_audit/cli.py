@@ -7,7 +7,7 @@ from pathlib import Path
 from .anchors import prepare_direct_answer_anchors, stratified_sample
 from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
-from .manifests import compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
+from .manifests import compose_node_manifests, filter_wild_nodes, load_anchors, load_nodes, load_wild_nodes
 from .preflight import audit_direct_answer_tokenizers, validate_anchor_measurement, validate_tokenizer_candidates
 from .splits import write_panel_splits
 from .sources import (
@@ -123,6 +123,11 @@ def main(argv: list[str] | None = None) -> None:
     compose_nodes = sub.add_parser("compose-node-manifests")
     compose_nodes.add_argument("--inputs", nargs="+", required=True)
     compose_nodes.add_argument("--output", required=True)
+    filter_wild = sub.add_parser("filter-wild-nodes")
+    filter_wild.add_argument("--input", required=True)
+    filter_wild.add_argument("--output", required=True)
+    filter_wild.add_argument("--exclude-candidate-ids", nargs="+", required=True)
+    filter_wild.add_argument("--rationale", required=True)
 
     def inference_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--nodes", required=True)
@@ -291,6 +296,8 @@ def main(argv: list[str] | None = None) -> None:
         write_panel_splits(args.nodes, args.output_dir, args.wild_nodes)
     elif args.command == "compose-node-manifests":
         compose_node_manifests(args.inputs, args.output)
+    elif args.command == "filter-wild-nodes":
+        filter_wild_nodes(args.input, args.output, set(args.exclude_candidate_ids), args.rationale)
     elif args.command == "audit-native-interfaces":
         build_native_interface_manifest(args.nodes, args.wild_nodes, args.output)
     elif args.command == "run-node":

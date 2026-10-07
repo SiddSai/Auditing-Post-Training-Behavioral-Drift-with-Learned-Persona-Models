@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 import tempfile
@@ -8,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ManifestError
-from .io import read_jsonl
+from .io import atomic_json, file_sha256, read_jsonl
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -91,6 +92,46 @@ def compose_node_manifests(inputs: list[str | Path], output: str | Path) -> None
             writer.writerow(row)
         temporary = Path(handle.name)
     os.replace(temporary, target)
+
+
+def filter_wild_nodes(
+    input_path: str | Path, output_path: str | Path, excluded_candidate_ids: set[str], rationale: str,
+) -> None:
+    """Freeze an anchor-measurement-compatible descendant manifest.
+
+    Observational descendants remain in the source candidate manifest even if
+    they fail the pre-registered forced-choice mass gate. This function writes
+    a derived, fully pinned manifest plus provenance rather than deleting or
+    silently rewriting a candidate's original record.
+    """
+    source = Path(input_path)
+    with source.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = reader.fieldnames or []
+        rows = list(reader)
+    if not rows or "candidate_id" not in fields:
+        raise ManifestError(f"{input_path} is not a valid wild-candidate manifest")
+    available = {row["candidate_id"] for row in rows}
+    unknown = excluded_candidate_ids - available
+    if unknown:
+        raise ManifestError(f"Cannot exclude absent wild candidates: {sorted(unknown)}")
+    selected = [row for row in rows if row["candidate_id"] not in excluded_candidate_ids]
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", dir=target.parent, delete=False) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(selected)
+        temporary = Path(handle.name)
+    os.replace(temporary, target)
+    # Validate exactly the derived content used by inference.
+    load_wild_nodes(target)
+    atomic_json(target.with_suffix(target.suffix + ".provenance.json"), {
+        "purpose": "Anchor-measurement-compatible observational descendant panel",
+        "input": str(source), "input_sha256": file_sha256(source),
+        "output_sha256": file_sha256(target), "excluded_candidate_ids": sorted(excluded_candidate_ids),
+        "rationale": rationale, "included_count": len(selected),
+    })
 
 
 def load_wild_nodes(path: str | Path) -> list[ModelNode]:
