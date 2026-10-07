@@ -110,7 +110,7 @@ def run_target_worker(nodes_path: str | Path, targets_path: str | Path, output_d
 
 
 def collect_target_observations(run_dir: str | Path, output: str | Path) -> None:
-    root, rows, hashes, engines = Path(run_dir), [], set(), set()
+    root, rows, hashes, engines, interface_hashes = Path(run_dir), [], set(), set(), set()
     for path in sorted((root / "observations").glob("*.jsonl")):
         meta = root / "metadata" / f"{path.stem}.json"
         if not meta.exists():
@@ -119,8 +119,9 @@ def collect_target_observations(run_dir: str | Path, output: str | Path) -> None
         if value.get("observation_sha256") != file_sha256(path):
             raise InferenceError(f"Hash mismatch: {path}")
         hashes.add(value.get("target_manifest_sha256")); engines.add(json.dumps(value.get("engine"), sort_keys=True))
+        interface_hashes.add(value.get("interface_manifest_sha256"))
         rows.extend(read_jsonl(path))
-    if not rows or len(hashes) != 1 or len(engines) != 1 or None in hashes:
+    if not rows or len(hashes) != 1 or len(engines) != 1 or len(interface_hashes) != 1 or None in hashes:
         raise InferenceError("Cannot collect absent or heterogeneous target observations")
     seen: set[tuple[str, str]] = set()
     for row in rows:
@@ -130,4 +131,4 @@ def collect_target_observations(run_dir: str | Path, output: str | Path) -> None
         seen.add(key)
     rows.sort(key=lambda row: (row["node_id"], row["target_id"]))
     atomic_jsonl(output, rows)
-    atomic_json(Path(output).with_suffix(Path(output).suffix + ".metadata.json"), {"node_count": len({row['node_id'] for row in rows}), "observation_count": len(rows), "target_manifest_sha256": next(iter(hashes)), "engine": json.loads(next(iter(engines))), "observations_sha256": file_sha256(output)})
+    atomic_json(Path(output).with_suffix(Path(output).suffix + ".metadata.json"), {"node_count": len({row['node_id'] for row in rows}), "observation_count": len(rows), "target_manifest_sha256": next(iter(hashes)), "interface_manifest_sha256": next(iter(interface_hashes)), "engine": json.loads(next(iter(engines))), "observations_sha256": file_sha256(output)})

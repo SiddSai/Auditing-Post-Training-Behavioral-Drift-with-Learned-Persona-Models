@@ -147,7 +147,7 @@ the full upstream commit SHA to its provenance artifact.
 - 6 official post-training releases: SFT, DPO, and final RLVR endpoints for
   both Instruct and Think.
 
-Pass `--wild-nodes manifests/wild_candidates.tsv` to add the 12 admitted wild
+Pass `--wild-nodes manifests/wild_candidates.tsv` to add the 21 admitted wild
 descendants. They get a stable `wild--<publisher>--<model>` run identifier;
 the original Hub ID and immutable revision remain in each worker artifact.
 
@@ -156,6 +156,32 @@ a mutable branch name. `revision` is retained solely as a human-readable
 checkpoint label. The temporal grid is intentionally denser early in
 pretraining and around training-stage transitions; it is not intended to make
 the checkpoints look like independent training runs.
+
+## Native-interface v2 primary experiment
+
+The original raw anchor run remains a controlled cross-checkpoint experiment,
+but it is not the primary assistant-behavior result. The v2 experiment uses
+the tokenizer-declared template at each pinned checkpoint for both anchors and
+benchmark prompts. It contains 71 assistant checkpoints: 50 official
+post-training states (six endpoints and 44 trajectory states) and 21 external
+observational descendants. The 40 base checkpoints remain a separate raw
+completion trajectory.
+
+On a prepared VM, run the following in order:
+
+```bash
+bash scripts/20_prepare_native_v2_panel.sh
+GPU_IDS="0 1" bash scripts/21_run_native_v2_anchors.sh
+GPU_IDS="0 1" bash scripts/22_run_native_v2_targets.sh
+# after both worker pools finish:
+bash scripts/23_collect_and_score_native_v2.sh
+```
+
+Script 20 composes the official manifests and creates a 111-row immutable
+template audit. The workers explicitly select only the 71
+`native_chat_template` rows; base-completion rows are never accidentally sent
+through a chat template. v2 runs use isolated directories and record both the
+anchor/target hash and the template-manifest hash in per-node metadata.
 
 ## Lineage
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,8 @@ from persona_audit.anchors import stratified_sample
 from persona_audit.errors import ManifestError
 from persona_audit.inference import _compatibility_overlay, collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
-from persona_audit.manifests import ModelNode, load_anchors, load_nodes, load_wild_nodes
+from persona_audit.manifests import Anchor, ModelNode, compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
+from persona_audit.interfaces import render_anchor_prompts
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
@@ -19,6 +21,32 @@ from persona_audit.predictor import audit_predictor_results, prepare_predictor_o
 
 
 class PipelineTests(unittest.TestCase):
+    def test_compose_node_manifests_and_native_anchor_rendering(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            header = "node_id\trepo_id\trevision\tcommit_sha\tphase\tprotocol\n"
+            first, second, output = root / "first.tsv", root / "second.tsv", root / "combined.tsv"
+            first.write_text(header + f"first\tpublisher/first\tmain\t{'a' * 40}\tposttrain_instruct\tchat\n")
+            second.write_text(header + f"second\tpublisher/second\tmain\t{'b' * 40}\tposttrain_think\tchat_thinking\n")
+            compose_node_manifests([first, second], output)
+            self.assertEqual([node.node_id for node in load_nodes(output)], ["first", "second"])
+
+            class Tokenizer:
+                chat_template = "native-template"
+                def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+                    self.messages, self.tokenize, self.add_generation_prompt = messages, tokenize, add_generation_prompt
+                    return "native-rendered"
+
+            anchor = Anchor("a", "Should I answer?", (" Yes", " No"), " Yes", "test", "source", "revision", 1.0)
+            tokenizer = Tokenizer()
+            interface = {
+                "rendering": "native_chat_template", "add_generation_prompt": True,
+                "template_sha256": hashlib.sha256(tokenizer.chat_template.encode()).hexdigest(),
+            }
+            self.assertEqual(render_anchor_prompts(tokenizer, [anchor], interface), ["native-rendered"])
+            self.assertEqual(tokenizer.messages, [{"role": "user", "content": "Should I answer?"}])
+            self.assertTrue(tokenizer.add_generation_prompt)
+
     def test_nodes_manifest_is_pinned(self) -> None:
         root = Path(__file__).parents[1]
         nodes = load_nodes(root / "manifests/nodes.tsv")

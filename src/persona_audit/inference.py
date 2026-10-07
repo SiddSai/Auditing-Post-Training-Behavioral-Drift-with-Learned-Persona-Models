@@ -15,6 +15,7 @@ from typing import Any
 from .errors import InferenceError
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import Anchor, ModelNode, load_anchors, load_nodes, load_wild_nodes
+from .interfaces import load_interfaces, render_anchor_prompts
 
 
 @dataclass(frozen=True)
@@ -128,7 +129,7 @@ def _extract_logprobs(output: Any) -> dict[int, float]:
     raise InferenceError(f"Unsupported vLLM logprob container: {type(first)!r}")
 
 
-def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor], config: EngineConfig) -> list[dict[str, Any]]:
+def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor], config: EngineConfig, interface: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     from vllm import SamplingParams
 
     grouped: dict[tuple[int, ...], list[Anchor]] = defaultdict(list)
@@ -142,7 +143,8 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
         )
         for start in range(0, len(group), config.batch_size):
             batch = group[start:start + config.batch_size]
-            outputs = llm.generate([anchor.prompt_raw for anchor in batch], params, use_tqdm=False)
+            prompts = render_anchor_prompts(tokenizer, batch, interface) if interface else [anchor.prompt_raw for anchor in batch]
+            outputs = llm.generate(prompts, params, use_tqdm=False)
             for anchor, output in zip(batch, outputs, strict=True):
                 token_ids = _candidate_ids(tokenizer, anchor)
                 scores = _extract_logprobs(output)
@@ -159,6 +161,7 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
                     "candidate_logprobs": candidate_logps,
                     "behavior_probability": math.exp(behavior_logp - normalizer),
                     "behavior_logit_margin": behavior_logp - max(value for key, value in candidate_logps.items() if key != anchor.behavior_consistent_candidate),
+                    "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_anchor_prompt"),
                 })
     return rows
 
@@ -170,6 +173,8 @@ def run_node(
     cache_dir: str | Path,
     config: EngineConfig,
     anchor_manifest_sha256: str,
+    interface: dict[str, Any] | None = None,
+    interface_manifest_sha256: str | None = None,
 ) -> Path:
     """Run one pinned checkpoint and atomically persist all anchor observations."""
     try:
@@ -186,13 +191,14 @@ def run_node(
         kwargs["max_model_len"] = config.max_model_len
     llm = LLM(**kwargs)
     try:
-        rows = _score_batch(llm, llm.get_tokenizer(), node, anchors, config)
+        rows = _score_batch(llm, llm.get_tokenizer(), node, anchors, config, interface)
     finally:
         del llm
     atomic_jsonl(observations, rows)
     atomic_json(metadata, {
         "node": asdict(node), "engine": asdict(config), "observation_sha256": file_sha256(observations),
         "anchor_count": len(anchors), "anchor_manifest_sha256": anchor_manifest_sha256,
+        "interface_manifest_sha256": interface_manifest_sha256, "interface": interface,
         "compatibility_overlay": compatibility,
         "completed_unix": time.time(),
     })
@@ -216,7 +222,8 @@ def claim_node(output_dir: str | Path, node_id: str) -> bool:
 
 
 def _completed_with_current_inputs(
-    metadata_path: Path, node: ModelNode, anchor_manifest_sha256: str, config: EngineConfig
+    metadata_path: Path, node: ModelNode, anchor_manifest_sha256: str, config: EngineConfig,
+    interface_manifest_sha256: str | None = None,
 ) -> bool:
     if not metadata_path.exists():
         return False
@@ -228,6 +235,7 @@ def _completed_with_current_inputs(
         "node": asdict(node),
         "engine": asdict(config),
         "anchor_manifest_sha256": anchor_manifest_sha256,
+        "interface_manifest_sha256": interface_manifest_sha256,
     }
     if all(value.get(key) == item for key, item in expected.items()):
         observations = metadata_path.parent.parent / "observations" / f"{node.node_id}.jsonl"
@@ -241,7 +249,8 @@ def _completed_with_current_inputs(
 
 def run_worker(
     nodes_path: str | Path, anchors_path: str | Path, output_dir: str | Path, cache_dir: str | Path,
-    config: EngineConfig, wild_nodes_path: str | Path | None = None,
+    config: EngineConfig, wild_nodes_path: str | Path | None = None, interfaces_path: str | Path | None = None,
+    interface_renderings: set[str] | None = None,
 ) -> None:
     nodes = load_nodes(nodes_path)
     if wild_nodes_path is not None:
@@ -252,14 +261,20 @@ def run_worker(
     anchors = load_anchors(anchors_path)
     root = Path(output_dir)
     anchor_manifest_sha256 = file_sha256(anchors_path)
+    interfaces = load_interfaces(interfaces_path, nodes) if interfaces_path else None
+    interface_manifest_sha256 = file_sha256(interfaces_path) if interfaces_path else None
+    if interface_renderings is not None:
+        if interfaces is None:
+            raise InferenceError("--interface-renderings requires an interface manifest")
+        nodes = [node for node in nodes if interfaces[node.node_id]["rendering"] in interface_renderings]
     for node in nodes:
         done = root / "metadata" / f"{node.node_id}.json"
-        if _completed_with_current_inputs(done, node, anchor_manifest_sha256, config):
+        if _completed_with_current_inputs(done, node, anchor_manifest_sha256, config, interface_manifest_sha256):
             continue
         if not claim_node(root, node.node_id):
             continue
         try:
-            run_node(node, anchors, root, cache_dir, config, anchor_manifest_sha256)
+            run_node(node, anchors, root, cache_dir, config, anchor_manifest_sha256, interfaces[node.node_id] if interfaces else None, interface_manifest_sha256)
         except Exception:
             # Preserve the claim as an auditable failure signal; operators can remove it deliberately.
             raise
@@ -274,6 +289,7 @@ def collect_observations(run_dir: str | Path, output_path: str | Path) -> None:
     rows: list[dict[str, Any]] = []
     anchor_hashes: set[str] = set()
     engine_configs: set[str] = set()
+    interface_hashes: set[str | None] = set()
     for observation_file in files:
         node_id = observation_file.stem
         metadata_file = root / "metadata" / f"{node_id}.json"
@@ -291,8 +307,9 @@ def collect_observations(run_dir: str | Path, output_path: str | Path) -> None:
             raise InferenceError(f"Incomplete metadata schema: {metadata_file}")
         anchor_hashes.add(metadata["anchor_manifest_sha256"])
         engine_configs.add(json.dumps(metadata["engine"], sort_keys=True, separators=(",", ":")))
+        interface_hashes.add(metadata.get("interface_manifest_sha256"))
         rows.extend(read_jsonl(observation_file))
-    if len(anchor_hashes) != 1 or len(engine_configs) != 1:
+    if len(anchor_hashes) != 1 or len(engine_configs) != 1 or len(interface_hashes) != 1:
         raise InferenceError(
             "Cannot merge heterogeneous workers: every observation must share the same anchor manifest and engine config"
         )
@@ -307,6 +324,7 @@ def collect_observations(run_dir: str | Path, output_path: str | Path) -> None:
     atomic_json(Path(output_path).with_suffix(Path(output_path).suffix + ".metadata.json"), {
         "per_node_count": len(files), "observation_count": len(rows),
         "anchor_manifest_sha256": next(iter(anchor_hashes)),
+        "interface_manifest_sha256": next(iter(interface_hashes)),
         "engine": json.loads(next(iter(engine_configs))),
         "observations_sha256": file_sha256(output_path),
     })

@@ -8,7 +8,7 @@ from typing import Any
 
 from .errors import InferenceError
 from .io import atomic_jsonl, read_jsonl
-from .manifests import ModelNode, load_nodes, load_wild_nodes
+from .manifests import Anchor, ModelNode, load_nodes, load_wild_nodes
 
 
 def _sha256(value: bytes | str) -> str:
@@ -99,3 +99,23 @@ def render_prompts(tokenizer: Any, targets: list[dict[str, Any]], interface: dic
         [{"role": "user", "content": target["prompt_raw"]}],
         tokenize=False, add_generation_prompt=bool(interface["add_generation_prompt"]),
     ) for target in targets]
+
+
+def render_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any]) -> list[str]:
+    """Render a persona question as exactly one native user turn.
+
+    The candidate answers are *not* appended to the chat transcript. They are
+    queried as next-token log-probabilities at the assistant generation
+    position, preserving the original paired-choice anchor measurement.
+    """
+    if interface["rendering"] == "raw_completion":
+        return [anchor.prompt_raw for anchor in anchors]
+    template = getattr(tokenizer, "chat_template", None)
+    if not isinstance(template, str) or not template.strip():
+        raise InferenceError("Pinned native chat template was absent after tokenizer load")
+    if _sha256(template) != interface["template_sha256"]:
+        raise InferenceError("Loaded chat template hash differs from audited interface manifest")
+    return [tokenizer.apply_chat_template(
+        [{"role": "user", "content": anchor.prompt_raw}],
+        tokenize=False, add_generation_prompt=bool(interface["add_generation_prompt"]),
+    ) for anchor in anchors]

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +53,44 @@ def load_nodes(path: str | Path) -> list[ModelNode]:
         ids.add(row["node_id"])
         nodes.append(ModelNode(**{key: row[key] for key in ModelNode.__dataclass_fields__}))
     return nodes
+
+
+def compose_node_manifests(inputs: list[str | Path], output: str | Path) -> None:
+    """Union pinned primary-node manifests without weakening their validation.
+
+    This is used to make a run-specific panel from the immutable base release
+    manifest plus separately versioned trajectory manifests. It deliberately
+    does not merge observational descendants, which retain their distinct
+    provenance schema and are supplied through ``--wild-nodes``.
+    """
+    if not inputs:
+        raise ManifestError("At least one primary node manifest is required")
+    rows: list[dict[str, str]] = []
+    fields: list[str] = []
+    seen: set[str] = set()
+    for path in inputs:
+        # Validate the input with the same contract the inference runner uses.
+        load_nodes(path)
+        with Path(path).open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            for name in reader.fieldnames or []:
+                if name not in fields:
+                    fields.append(name)
+            for row in reader:
+                node_id = row["node_id"]
+                if node_id in seen:
+                    raise ManifestError(f"Duplicate node_id while composing manifests: {node_id}")
+                seen.add(node_id)
+                rows.append(row)
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", dir=target.parent, delete=False) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n", extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+        temporary = Path(handle.name)
+    os.replace(temporary, target)
 
 
 def load_wild_nodes(path: str | Path) -> list[ModelNode]:

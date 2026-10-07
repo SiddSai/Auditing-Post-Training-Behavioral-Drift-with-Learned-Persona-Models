@@ -7,7 +7,7 @@ from pathlib import Path
 from .anchors import stratified_sample
 from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
-from .manifests import load_anchors, load_nodes, load_wild_nodes
+from .manifests import compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
 from .preflight import validate_tokenizer_candidates
 from .splits import write_panel_splits
 from .sources import (
@@ -96,6 +96,10 @@ def main(argv: list[str] | None = None) -> None:
     splits.add_argument("--wild-nodes")
     splits.add_argument("--output-dir", required=True)
 
+    compose_nodes = sub.add_parser("compose-node-manifests")
+    compose_nodes.add_argument("--inputs", nargs="+", required=True)
+    compose_nodes.add_argument("--output", required=True)
+
     def inference_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--nodes", required=True)
         command.add_argument("--wild-nodes", help="Optional admitted observational descendants manifest")
@@ -106,6 +110,8 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--gpu-memory-utilization", type=float, default=0.88)
         command.add_argument("--max-model-len", type=int)
         command.add_argument("--batch-size", type=int, default=512)
+        command.add_argument("--interfaces", help="Pinned per-node rendering manifest; omit for raw anchor prompts")
+        command.add_argument("--interface-renderings", nargs="+", choices=["raw_completion", "native_chat_template"], help="Restrict an interface-manifest run to selected rendering policies")
 
     node = sub.add_parser("run-node")
     inference_args(node)
@@ -248,6 +254,8 @@ def main(argv: list[str] | None = None) -> None:
         validate_tokenizer_candidates(args.model_repo, args.model_revision, args.anchors, args.output)
     elif args.command == "write-panel-splits":
         write_panel_splits(args.nodes, args.output_dir, args.wild_nodes)
+    elif args.command == "compose-node-manifests":
+        compose_node_manifests(args.inputs, args.output)
     elif args.command == "audit-native-interfaces":
         build_native_interface_manifest(args.nodes, args.wild_nodes, args.output)
     elif args.command == "run-node":
@@ -257,9 +265,11 @@ def main(argv: list[str] | None = None) -> None:
         run_node(
             selected, load_anchors(args.anchors), args.output_dir, args.cache_dir,
             _config(args), file_sha256(args.anchors),
+            load_interfaces(args.interfaces, load_nodes(args.nodes) + (load_wild_nodes(args.wild_nodes) if args.wild_nodes else []))[selected.node_id] if args.interfaces else None,
+            file_sha256(args.interfaces) if args.interfaces else None,
         )
     elif args.command == "anchor-worker":
-        run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes)
+        run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None)
     elif args.command == "target-worker":
         run_target_worker(args.nodes, args.targets, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None)
     elif args.command == "run-target-node":
