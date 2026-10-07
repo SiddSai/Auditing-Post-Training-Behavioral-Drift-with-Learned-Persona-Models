@@ -23,6 +23,7 @@ for gpu in $gpu_ids; do
     > "$run/logs/worker-${gpu}.log" 2>&1 &
 done
 wait
+[[ "$(find "$run/metadata" -name '*.json' | wc -l | tr -d ' ')" == 6 ]] || { echo 'Anchor pilot is incomplete; inspect logs before retrying.' >&2; exit 1; }
 persona-audit collect-observations --run-dir "$run" --output "$run/observations.jsonl"
 persona-audit validate-anchor-measurement --observations "$run/observations.jsonl" \
   --output "$run/measurement_gate.csv" --min-node-median-mass 1e-4
