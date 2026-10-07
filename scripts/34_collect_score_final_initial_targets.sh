@@ -9,6 +9,11 @@ out="$target_run/native_scorers"
 [[ "$(find "$target_run/metadata" -name '*.json' | wc -l | tr -d ' ')" == 71 ]] || { echo 'Target run is incomplete.' >&2; exit 1; }
 persona-audit collect-target-observations --run-dir "$target_run" --output "$target_run/observations.jsonl"
 mkdir -p "$out"
+python - <<'PY'
+import nltk
+for package in ('punkt', 'punkt_tab'):
+    nltk.download(package, quiet=True)
+PY
 persona-audit write-native-scorer-inputs --observations "$target_run/observations.jsonl" --targets "$targets" --output-dir "$out"
 persona-audit score-xstest-native --observations "$target_run/observations.jsonl" --targets "$targets" --output "$out/xstest_scores.jsonl"
 persona-audit score-ifeval-native --observations "$target_run/observations.jsonl" --targets "$targets" --source-root data/snapshots/target_sources_v1 --output "$out/ifeval_scores.jsonl"
