@@ -5,6 +5,7 @@ __pycache__/
 .env
 data/snapshots/
 runs/
+exports/
 scratch/
 *.joblib
 *.npz

@@ -204,32 +204,36 @@ def _development_rates(train: list[dict[str, Any]], test: list[dict[str, Any]]) 
     return np.asarray(train_rates, dtype=float).reshape(-1, 1), np.asarray(test_rates, dtype=float).reshape(-1, 1)
 
 
-def _metadata_features(nodes_path: str | Path, wild_nodes_path: str | Path, all_nodes: list[str]) -> dict[str, np.ndarray]:
-    """Features known before target generation, intentionally unable to distinguish wild nodes.
+def _metadata_features(
+    nodes_path: str | Path, wild_nodes_path: str | Path, all_nodes: list[str], anchor_observations: str | Path,
+) -> dict[str, np.ndarray]:
+    """Cheap controls available before behavioral target generation.
 
-    The post-training indicator and normalized trajectory progress constitute a
-    strong enough cheap alternative to test whether z adds more than training
-    stage.  Wild descendants receive the terminal/post-training value rather
-    than a ``wild`` identity feature, which would leak their test membership.
+    This deliberately excludes checkpoint/model identity.  It controls for
+    (i) whether the pinned native template inserted a Think suffix, (ii)
+    whether a node is an external descendant, and (iii) official post-training
+    stage (SFT/DPO/RLVR).  The Think flag is computed from the pinned template,
+    not behavioral target labels.
     """
     official = {node.node_id: node for node in load_nodes(nodes_path)}
-    base_tokens: list[float] = []
-    with Path(nodes_path).open(encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle, delimiter="\t"):
-            if row["phase"].startswith("base_") and row.get("tokens_seen"):
-                base_tokens.append(float(row["tokens_seen"]))
-    ceiling = max(base_tokens) if base_tokens else 1.0
+    think_suffix: dict[str, bool] = {}
+    for row in read_jsonl(anchor_observations):
+        node_id = str(row["node_id"])
+        if node_id not in all_nodes:
+            continue
+        observed = bool(row.get("template_forced_think_suffix_removed", False))
+        if node_id in think_suffix and think_suffix[node_id] != observed:
+            raise ManifestError(f"Inconsistent template Think flag for {node_id}")
+        think_suffix[node_id] = observed
     values: dict[str, np.ndarray] = {}
-    with Path(nodes_path).open(encoding="utf-8", newline="") as handle:
-        table = {row["node_id"]: row for row in csv.DictReader(handle, delimiter="\t")}
     for node_id in all_nodes:
-        if node_id in official:
-            node, row = official[node_id], table[node_id]
-            posttrained = float(not node.phase.startswith("base_"))
-            progress = float(row.get("tokens_seen") or ceiling) / ceiling
-        else:
-            posttrained, progress = 1.0, 1.0
-        values[node_id] = np.asarray([posttrained, progress], dtype=float)
+        phase = official[node_id].phase if node_id in official else "external"
+        # Backwards-compatible fallback lets synthetic tests omit the newly
+        # recorded rendering field while retaining the stage control.
+        think = float(think_suffix.get(node_id, "think" in phase))
+        external = float(node_id not in official)
+        sft, dpo, rlvr = (float(phase.endswith(suffix)) for suffix in ("_sft", "_dpo", "_rlvr"))
+        values[node_id] = np.asarray([think, external, sft, dpo, rlvr], dtype=float)
     return values
 
 
@@ -358,7 +362,7 @@ def run_predictor_experiment(
     base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
     calibration_variants = ("development_rate_only", "prompt_plus_development_rate", "state_plus_development_rate", "full_plus_development_rate")
     executed_variants: set[str] = set()
-    metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids)
+    metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids, anchor_observations)
     for internal_split_name, (train_nodes, test_nodes) in split_specs.items():
         # Cross-validated folds share a reported split label, allowing
         # aggregate held-out metrics and model-cluster bootstrap intervals.
@@ -437,6 +441,7 @@ def run_predictor_experiment(
         "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
         "splits": {name: {"reported_split": name.split("::", 1)[0], "train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
         "variants": sorted(executed_variants), "outcome_protocols": OUTCOME_PROTOCOLS,
+        "metadata_controls": ["template_forced_think_suffix", "external_descendant", "official_stage_sft", "official_stage_dpo", "official_stage_rlvr"],
         "interpretation": "This is concurrent held-out behavioral prediction, not a future-state forecast.",
     })
 
@@ -558,6 +563,41 @@ def audit_predictor_results(predictions_path: str | Path, geometry_path: str | P
                 summaries.append({"split": split, "family": family, "variant": variant, "n_models": len(rows), "model_level_mae": float(np.mean(np.abs(observed - predicted))), "model_level_pearson": pearson, "model_level_spearman": spearman})
     with (destination / "model_level_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(summaries[0])); writer.writeheader(); writer.writerows(summaries)
+    # Pooled AUROC can mix model base-rate differences with prompt ranking and
+    # can invert when fold intercepts differ. Report both alternatives:
+    # within-model discrimination and fold-macro metrics.
+    prediction_rows = read_jsonl(predictions_path)
+    within_rows: list[dict[str, Any]] = []
+    within_summary: list[dict[str, Any]] = []
+    fold_summary: list[dict[str, Any]] = []
+    for split in sorted({row["split"] for row in prediction_rows}):
+        for family in sorted({row["family"] for row in prediction_rows if row["split"] == split}):
+            for variant in sorted({row["variant"] for row in prediction_rows if row["split"] == split and row["family"] == family}):
+                cell = [row for row in prediction_rows if row["split"] == split and row["family"] == family and row["variant"] == variant]
+                aucs: list[float] = []
+                for node_id in sorted({row["node_id"] for row in cell}):
+                    node_rows = [row for row in cell if row["node_id"] == node_id]
+                    y = np.asarray([row["outcome"] for row in node_rows], dtype=int)
+                    probability = np.asarray([row["probability"] for row in node_rows], dtype=float)
+                    auc = float(roc_auc_score(y, probability)) if len(np.unique(y)) == 2 else None
+                    within_rows.append({"split": split, "family": family, "variant": variant, "node_id": node_id, "n_prompts": len(node_rows), "auroc": auc})
+                    if auc is not None:
+                        aucs.append(auc)
+                within_summary.append({"split": split, "family": family, "variant": variant, "eligible_models": len(aucs), "within_model_macro_auroc": float(np.mean(aucs)) if aucs else None})
+                fold_metrics = []
+                for fold_id in sorted({row["fold_id"] for row in cell}):
+                    fold_rows = [row for row in cell if row["fold_id"] == fold_id]
+                    fold_metrics.append(_metrics(np.asarray([row["outcome"] for row in fold_rows], dtype=int), np.asarray([row["probability"] for row in fold_rows], dtype=float)))
+                fold_summary.append({
+                    "split": split, "family": family, "variant": variant, "folds": len(fold_metrics),
+                    "fold_macro_auroc": float(np.mean([item["auroc"] for item in fold_metrics if item["auroc"] is not None])) if any(item["auroc"] is not None for item in fold_metrics) else None,
+                    "fold_macro_log_loss": float(np.mean([item["log_loss"] for item in fold_metrics])),
+                    "fold_macro_brier": float(np.mean([item["brier"] for item in fold_metrics])),
+                })
+    atomic_jsonl(destination / "within_model_auroc.jsonl", within_rows)
+    for filename, report_rows in (("within_model_metrics.csv", within_summary), ("fold_macro_metrics.csv", fold_summary)):
+        with (destination / filename).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(report_rows[0])); writer.writeheader(); writer.writerows(report_rows)
     geometry = read_jsonl(geometry_path)
     geometry_summary = []
     for split in sorted({row["split"] for row in geometry}):

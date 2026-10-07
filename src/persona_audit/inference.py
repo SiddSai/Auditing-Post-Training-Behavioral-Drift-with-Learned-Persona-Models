@@ -15,7 +15,7 @@ from typing import Any
 from .errors import InferenceError
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import Anchor, ModelNode, load_anchors, load_nodes, load_wild_nodes
-from .interfaces import load_interfaces, render_anchor_prompts
+from .interfaces import load_interfaces, render_anchor_prompts, render_direct_answer_anchor_prompts
 
 
 @dataclass(frozen=True)
@@ -129,7 +129,7 @@ def _extract_logprobs(output: Any) -> dict[int, float]:
     raise InferenceError(f"Unsupported vLLM logprob container: {type(first)!r}")
 
 
-def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor], config: EngineConfig, interface: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor], config: EngineConfig, interface: dict[str, Any] | None = None, anchor_protocol: str = "upstream_paired_choice") -> list[dict[str, Any]]:
     from vllm import SamplingParams
 
     grouped: dict[tuple[int, ...], list[Anchor]] = defaultdict(list)
@@ -143,7 +143,13 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
         )
         for start in range(0, len(group), config.batch_size):
             batch = group[start:start + config.batch_size]
-            prompts = render_anchor_prompts(tokenizer, batch, interface) if interface else [anchor.prompt_raw for anchor in batch]
+            if interface:
+                if anchor_protocol == "direct_answer_no_think":
+                    prompts, think_suffix_removed = render_direct_answer_anchor_prompts(tokenizer, batch, interface)
+                else:
+                    prompts, think_suffix_removed = render_anchor_prompts(tokenizer, batch, interface), False
+            else:
+                prompts, think_suffix_removed = [anchor.prompt_raw for anchor in batch], False
             outputs = llm.generate(prompts, params, use_tqdm=False)
             for anchor, output in zip(batch, outputs, strict=True):
                 token_ids = _candidate_ids(tokenizer, anchor)
@@ -161,6 +167,9 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
                     "candidate_logprobs": candidate_logps,
                     "behavior_probability": math.exp(behavior_logp - normalizer),
                     "behavior_logit_margin": behavior_logp - max(value for key, value in candidate_logps.items() if key != anchor.behavior_consistent_candidate),
+                    "candidate_total_probability": float(sum(math.exp(value) for value in candidate_logps.values())),
+                    "anchor_protocol": anchor_protocol,
+                    "template_forced_think_suffix_removed": think_suffix_removed,
                     "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_anchor_prompt"),
                 })
     return rows
@@ -175,6 +184,7 @@ def run_node(
     anchor_manifest_sha256: str,
     interface: dict[str, Any] | None = None,
     interface_manifest_sha256: str | None = None,
+    anchor_protocol: str = "upstream_paired_choice",
 ) -> Path:
     """Run one pinned checkpoint and atomically persist all anchor observations."""
     try:
@@ -191,7 +201,7 @@ def run_node(
         kwargs["max_model_len"] = config.max_model_len
     llm = LLM(**kwargs)
     try:
-        rows = _score_batch(llm, llm.get_tokenizer(), node, anchors, config, interface)
+        rows = _score_batch(llm, llm.get_tokenizer(), node, anchors, config, interface, anchor_protocol)
     finally:
         del llm
     atomic_jsonl(observations, rows)
@@ -199,6 +209,7 @@ def run_node(
         "node": asdict(node), "engine": asdict(config), "observation_sha256": file_sha256(observations),
         "anchor_count": len(anchors), "anchor_manifest_sha256": anchor_manifest_sha256,
         "interface_manifest_sha256": interface_manifest_sha256, "interface": interface,
+        "anchor_protocol": anchor_protocol,
         "compatibility_overlay": compatibility,
         "completed_unix": time.time(),
     })
@@ -223,7 +234,7 @@ def claim_node(output_dir: str | Path, node_id: str) -> bool:
 
 def _completed_with_current_inputs(
     metadata_path: Path, node: ModelNode, anchor_manifest_sha256: str, config: EngineConfig,
-    interface_manifest_sha256: str | None = None,
+    interface_manifest_sha256: str | None = None, anchor_protocol: str = "upstream_paired_choice",
 ) -> bool:
     if not metadata_path.exists():
         return False
@@ -236,6 +247,7 @@ def _completed_with_current_inputs(
         "engine": asdict(config),
         "anchor_manifest_sha256": anchor_manifest_sha256,
         "interface_manifest_sha256": interface_manifest_sha256,
+        "anchor_protocol": anchor_protocol,
     }
     if all(value.get(key) == item for key, item in expected.items()):
         observations = metadata_path.parent.parent / "observations" / f"{node.node_id}.jsonl"
@@ -250,7 +262,7 @@ def _completed_with_current_inputs(
 def run_worker(
     nodes_path: str | Path, anchors_path: str | Path, output_dir: str | Path, cache_dir: str | Path,
     config: EngineConfig, wild_nodes_path: str | Path | None = None, interfaces_path: str | Path | None = None,
-    interface_renderings: set[str] | None = None,
+    interface_renderings: set[str] | None = None, anchor_protocol: str = "upstream_paired_choice", node_ids: set[str] | None = None,
 ) -> None:
     nodes = load_nodes(nodes_path)
     if wild_nodes_path is not None:
@@ -267,14 +279,19 @@ def run_worker(
         if interfaces is None:
             raise InferenceError("--interface-renderings requires an interface manifest")
         nodes = [node for node in nodes if interfaces[node.node_id]["rendering"] in interface_renderings]
+    if node_ids is not None:
+        unknown = node_ids - {node.node_id for node in nodes}
+        if unknown:
+            raise InferenceError(f"Unknown or filtered node IDs: {sorted(unknown)}")
+        nodes = [node for node in nodes if node.node_id in node_ids]
     for node in nodes:
         done = root / "metadata" / f"{node.node_id}.json"
-        if _completed_with_current_inputs(done, node, anchor_manifest_sha256, config, interface_manifest_sha256):
+        if _completed_with_current_inputs(done, node, anchor_manifest_sha256, config, interface_manifest_sha256, anchor_protocol):
             continue
         if not claim_node(root, node.node_id):
             continue
         try:
-            run_node(node, anchors, root, cache_dir, config, anchor_manifest_sha256, interfaces[node.node_id] if interfaces else None, interface_manifest_sha256)
+            run_node(node, anchors, root, cache_dir, config, anchor_manifest_sha256, interfaces[node.node_id] if interfaces else None, interface_manifest_sha256, anchor_protocol)
         except Exception:
             # Preserve the claim as an auditable failure signal; operators can remove it deliberately.
             raise

@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from .anchors import stratified_sample
+from .anchors import prepare_direct_answer_anchors, stratified_sample
 from .inference import EngineConfig, collect_observations, run_node, run_worker
 from .io import file_sha256
 from .manifests import compose_node_manifests, load_anchors, load_nodes, load_wild_nodes
-from .preflight import validate_tokenizer_candidates
+from .preflight import audit_direct_answer_tokenizers, validate_anchor_measurement, validate_tokenizer_candidates
 from .splits import write_panel_splits
 from .sources import (
     ANTHROPIC_EVALS_PERSONA_REVISION,
@@ -91,6 +91,20 @@ def main(argv: list[str] | None = None) -> None:
     tokenizer.add_argument("--anchors", required=True)
     tokenizer.add_argument("--output", required=True)
 
+    direct_anchors = sub.add_parser("prepare-direct-answer-anchors")
+    direct_anchors.add_argument("--input", required=True)
+    direct_anchors.add_argument("--output", required=True)
+    direct_preflight = sub.add_parser("audit-direct-answer-tokenizers")
+    direct_preflight.add_argument("--nodes", required=True)
+    direct_preflight.add_argument("--wild-nodes", required=True)
+    direct_preflight.add_argument("--anchors", required=True)
+    direct_preflight.add_argument("--interfaces", required=True)
+    direct_preflight.add_argument("--output", required=True)
+    measurement = sub.add_parser("validate-anchor-measurement")
+    measurement.add_argument("--observations", required=True)
+    measurement.add_argument("--output", required=True)
+    measurement.add_argument("--min-node-median-mass", type=float, default=1e-4)
+
     splits = sub.add_parser("write-panel-splits")
     splits.add_argument("--nodes", required=True)
     splits.add_argument("--wild-nodes")
@@ -112,6 +126,8 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--batch-size", type=int, default=512)
         command.add_argument("--interfaces", help="Pinned per-node rendering manifest; omit for raw anchor prompts")
         command.add_argument("--interface-renderings", nargs="+", choices=["raw_completion", "native_chat_template"], help="Restrict an interface-manifest run to selected rendering policies")
+        command.add_argument("--anchor-protocol", choices=["upstream_paired_choice", "direct_answer_no_think"], default="upstream_paired_choice")
+        command.add_argument("--node-ids-file", help="Optional newline-delimited subset of node IDs for a pre-registered pilot")
 
     node = sub.add_parser("run-node")
     inference_args(node)
@@ -232,6 +248,12 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps({"nodes": len(load_nodes(args.nodes)), "anchors": len(load_anchors(args.anchors))}))
     elif args.command == "sample-anchors":
         stratified_sample(args.input, args.output, args.size, args.seed)
+    elif args.command == "prepare-direct-answer-anchors":
+        prepare_direct_answer_anchors(args.input, args.output)
+    elif args.command == "audit-direct-answer-tokenizers":
+        audit_direct_answer_tokenizers(args.nodes, args.wild_nodes, args.anchors, args.interfaces, args.output)
+    elif args.command == "validate-anchor-measurement":
+        validate_anchor_measurement(args.observations, args.output, args.min_node_median_mass)
     elif args.command == "snapshot-hf":
         print(snapshot_hf(args.repo_id, args.revision, args.output, args.repo_type))
     elif args.command == "snapshot-git":
@@ -266,10 +288,11 @@ def main(argv: list[str] | None = None) -> None:
             selected, load_anchors(args.anchors), args.output_dir, args.cache_dir,
             _config(args), file_sha256(args.anchors),
             load_interfaces(args.interfaces, load_nodes(args.nodes) + (load_wild_nodes(args.wild_nodes) if args.wild_nodes else []))[selected.node_id] if args.interfaces else None,
-            file_sha256(args.interfaces) if args.interfaces else None,
+            file_sha256(args.interfaces) if args.interfaces else None, args.anchor_protocol,
         )
     elif args.command == "anchor-worker":
-        run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None)
+        node_ids = set(Path(args.node_ids_file).read_text(encoding="utf-8").split()) if args.node_ids_file else None
+        run_worker(args.nodes, args.anchors, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None, args.anchor_protocol, node_ids)
     elif args.command == "target-worker":
         run_target_worker(args.nodes, args.targets, args.output_dir, args.cache_dir, _config(args), args.wild_nodes, args.interfaces, set(args.interface_renderings) if args.interface_renderings else None)
     elif args.command == "run-target-node":

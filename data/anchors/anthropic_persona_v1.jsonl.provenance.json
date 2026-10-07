@@ -1,0 +1,9 @@
+{
+  "input_sha256": "d8faa1576d7f1032e07706f0a69fc9723879d99079025c29ce5c2ac1cb0d7f43",
+  "output_sha256": "05dfc6ec69846f2a75e7225884ab374fd4e1a59194c64c94117aad3f70e7330a",
+  "requested_size": 300,
+  "sampling": "round_robin_over_(family,behavior_consistent_candidate)_strata",
+  "seed": 20261005,
+  "selected_size": 300,
+  "stratum_count": 270
+}

@@ -119,3 +119,30 @@ def render_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict
         [{"role": "user", "content": anchor.prompt_raw}],
         tokenize=False, add_generation_prompt=bool(interface["add_generation_prompt"]),
     ) for anchor in anchors]
+
+
+def render_direct_answer_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any]) -> tuple[list[str], bool]:
+    """Render fixed-choice anchors at a direct assistant boundary.
+
+    OLMo Think release templates add ``<think>`` at generation time.  For a
+    standardized *direct-answer measurement* we remove precisely that terminal
+    inference suffix, leaving the pinned template's system/user/assistant
+    structure untouched.  This is not used for behavioral target generation.
+    """
+    prompts = render_anchor_prompts(tokenizer, anchors, interface)
+    if interface["rendering"] == "raw_completion":
+        return prompts, False
+    stripped: list[str] = []
+    removed_any = False
+    for prompt in prompts:
+        trimmed = prompt.rstrip()
+        if trimmed.endswith("<think>"):
+            # Retain exactly the native prefix before the suffix, including
+            # its assistant-header newline; remove only trailing whitespace
+            # that was after <think>.
+            suffix_start = len(trimmed) - len("<think>")
+            stripped.append(trimmed[:suffix_start])
+            removed_any = True
+        else:
+            stripped.append(prompt)
+    return stripped, removed_any
