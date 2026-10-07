@@ -197,6 +197,19 @@ and tests on the 21 external descendants. The latter is the appropriate
 model-holdout stress test; it does not give a held-out external model access to
 its own development behavior.
 
+It is not a replacement for cross-validation across the full panel. Run the
+additional unseen-model analyses with:
+
+```bash
+bash scripts/26_run_native_v2_model_holdouts.sh
+```
+
+This produces both leave-one-model-out (the held-out checkpoint may have close
+neighbors in training) and stricter leave-one-lineage/author-group-out results.
+The latter holds out each official Instruct or Think trajectory as a unit and
+groups third-party descendants by publisher, preventing sibling checkpoints
+from being misrepresented as independent external validation.
+
 ## Lineage
 
 `manifests/edges.tsv` is a declared lineage graph. The exact parent SHA for

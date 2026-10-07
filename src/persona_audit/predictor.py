@@ -269,8 +269,43 @@ def _splits(nodes_path: str | Path, wild_nodes_path: str | Path, analysis_panel:
         if len(native_models) < 2:
             raise ManifestError("native_all_prompt_holdout requires at least two interface-valid post-training nodes")
         return {"all_native_models_prompt_holdout": (native_models, native_models)}
+    if analysis_panel in {"native_leave_one_model_out", "native_leave_one_lineage_out"}:
+        native_nodes = [node for node in all_nodes if node.phase.startswith("posttrain_")] + [
+            node for node in all_nodes if node.node_id in set(wild)
+        ]
+        if len(native_nodes) < 3:
+            raise ManifestError(f"{analysis_panel} requires at least three native assistant models")
+        if analysis_panel == "native_leave_one_model_out":
+            return {
+                f"native_leave_one_model_out::{node.node_id}":
+                ([other.node_id for other in native_nodes if other.node_id != node.node_id], [node.node_id])
+                for node in native_nodes
+            }
+
+        def lineage_group(node: ModelNode) -> str:
+            # Official trajectories are each one correlated training lineage.
+            if node.phase.startswith("posttrain_instruct"):
+                return "official_instruct_posttraining"
+            if node.phase.startswith("posttrain_think"):
+                return "official_think_posttraining"
+            # Third-party descendants are grouped conservatively by releasing
+            # author/organization; this prevents sibling fine-tunes from
+            # becoming apparent independent validation models.
+            publisher = node.repo_id.split("/", 1)[0].lower()
+            return f"external_{publisher}"
+
+        groups: dict[str, list[str]] = {}
+        for node in native_nodes:
+            groups.setdefault(lineage_group(node), []).append(node.node_id)
+        if len(groups) < 2:
+            raise ManifestError("Leave-one-lineage-out requires at least two lineage groups")
+        return {
+            f"native_leave_one_lineage_out::{group}":
+            ([node.node_id for node in native_nodes if node.node_id not in held_out], held_out)
+            for group, held_out in sorted(groups.items())
+        }
     if analysis_panel != "all":
-        raise ManifestError("analysis_panel must be 'all', 'native_posttrain', or 'native_all_prompt_holdout'")
+        raise ManifestError("Unknown analysis_panel")
     # Nodes are already in the published chronological manifest order.  The
     # tail split tests forward generalization rather than a random checkpoint
     # holdout, which would overstate performance on a dense trajectory.
@@ -319,18 +354,25 @@ def run_predictor_experiment(
         if row["target_id"] not in target_by_id: raise ManifestError(f"Outcome target absent from manifest: {row['target_id']}")
     destination = Path(output_dir); destination.mkdir(parents=True, exist_ok=True)
     predictions: list[dict[str, Any]] = []
-    metrics: list[dict[str, Any]] = []
     geometry_rows: list[dict[str, Any]] = []
     base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
     calibration_variants = ("development_rate_only", "prompt_plus_development_rate", "state_plus_development_rate", "full_plus_development_rate")
     executed_variants: set[str] = set()
     metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids)
-    for split_name, (train_nodes, test_nodes) in split_specs.items():
+    for internal_split_name, (train_nodes, test_nodes) in split_specs.items():
+        # Cross-validated folds share a reported split label, allowing
+        # aggregate held-out metrics and model-cluster bootstrap intervals.
+        split_name = internal_split_name.split("::", 1)[0]
         states, geometry = _states_for_fold(anchor_observations, anchors, train_nodes, all_node_ids, state_dimensions, state_method)
         for node_id in all_node_ids:
             in_train, in_test = node_id in train_nodes, node_id in test_nodes
+            # In CV, each held-out model gets one geometry record from its
+            # own fold. Recording every training node in every fold would
+            # duplicate geometry without adding an evaluable observation.
+            if "::" in internal_split_name and not in_test:
+                continue
             geometry_rows.append({
-                "split": split_name, "node_id": node_id,
+                "split": split_name, "fold_id": internal_split_name, "node_id": node_id,
                 # Prompt-held-out analyses intentionally use the same models
                 # for state fitting and behavioral evaluation. Preserve that
                 # fact rather than silently assigning them to train only.
@@ -370,12 +412,18 @@ def run_predictor_experiment(
                     classifier = LogisticRegression(C=c, max_iter=1000, solver="lbfgs", random_state=0)
                     classifier.fit(scaler.transform(x_train), y_train)
                     probability = classifier.predict_proba(scaler.transform(x_test))[:, 1]
-                summary = _metrics(y_test, probability)
-                metrics.append({"split": split_name, "family": family, "variant": variant, "train_models": len(train_nodes), "test_models": len(test_nodes), "train_rows": len(train), **summary})
                 for row, prob in zip(test, probability, strict=True):
-                    predictions.append({"split": split_name, "family": family, "variant": variant, "node_id": row["node_id"], "target_id": row["target_id"], "split_target": row["split"], "outcome": row["outcome"], "probability": float(prob)})
-    if not metrics:
+                    predictions.append({"split": split_name, "fold_id": internal_split_name, "family": family, "variant": variant, "node_id": row["node_id"], "target_id": row["target_id"], "split_target": row["split"], "outcome": row["outcome"], "probability": float(prob), "train_models": len(train_nodes)})
+    if not predictions:
         raise ManifestError("No predictor cells were fit; check outcome family coverage and model splits")
+    metrics: list[dict[str, Any]] = []
+    for split_name in sorted({row["split"] for row in predictions}):
+        for family in sorted({row["family"] for row in predictions if row["split"] == split_name}):
+            for variant in sorted({row["variant"] for row in predictions if row["split"] == split_name and row["family"] == family}):
+                rows = [row for row in predictions if row["split"] == split_name and row["family"] == family and row["variant"] == variant]
+                summary = _metrics(np.asarray([row["outcome"] for row in rows], dtype=int), np.asarray([row["probability"] for row in rows], dtype=float))
+                train_model_counts = {int(row["train_models"]) for row in rows}
+                metrics.append({"split": split_name, "family": family, "variant": variant, "train_models": ";".join(map(str, sorted(train_model_counts))), "test_models": len({row["node_id"] for row in rows}), "folds": len({row["fold_id"] for row in rows}), "train_rows": None, **summary})
     atomic_jsonl(destination / "predictions.jsonl", predictions)
     atomic_jsonl(destination / "state_geometry.jsonl", geometry_rows)
     with (destination / "metrics.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -387,7 +435,7 @@ def run_predictor_experiment(
         "targets_sha256": file_sha256(targets), "outcomes_sha256": file_sha256(outcomes),
         "nodes_sha256": file_sha256(nodes), "wild_nodes_sha256": file_sha256(wild_nodes),
         "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
-        "splits": {name: {"train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
+        "splits": {name: {"reported_split": name.split("::", 1)[0], "train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
         "variants": sorted(executed_variants), "outcome_protocols": OUTCOME_PROTOCOLS,
         "interpretation": "This is concurrent held-out behavioral prediction, not a future-state forecast.",
     })
