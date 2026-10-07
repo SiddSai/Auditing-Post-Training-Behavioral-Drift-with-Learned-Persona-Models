@@ -22,7 +22,7 @@ for gpu in $gpu_ids; do
     --interfaces data/interfaces/native_interface_v2.jsonl \
     --interface-renderings native_chat_template --anchor-protocol native_think_then_answer \
     --node-ids-file manifests/direct_answer_anchor_pilot_nodes_v1.txt \
-    --output-dir "$run" --cache-dir "$PWD/.hf-cache" --batch-size 128 --think-max-tokens 512 \
+    --output-dir "$run" --cache-dir "$PWD/.hf-cache" --batch-size 128 --think-max-tokens 2048 \
     > "$run/logs/worker-${gpu}.log" 2>&1 &
 done
 wait
