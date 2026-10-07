@@ -25,7 +25,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(nodes), 46)
         self.assertTrue(all(len(node.commit_sha) == 40 for node in nodes))
         wild = load_wild_nodes(root / "manifests/wild_candidates.tsv")
-        self.assertEqual(len(wild), 12)
+        self.assertEqual(len(wild), 21)
         self.assertTrue(all(node.node_id.startswith("wild--") for node in wild))
 
     def test_stratify_and_fit_state(self) -> None:
@@ -112,7 +112,7 @@ class PipelineTests(unittest.TestCase):
             root = Path(__file__).parents[1]
             output = Path(temp)
             write_panel_splits(root / "manifests/nodes.tsv", output, root / "manifests/wild_candidates.tsv")
-            self.assertEqual(len(json.loads((output / "all_panel_nodes.json").read_text())), 58)
+            self.assertEqual(len(json.loads((output / "all_panel_nodes.json").read_text())), 67)
             self.assertEqual(len(json.loads((output / "official_panel_nodes.json").read_text())), 46)
             self.assertEqual(len(json.loads((output / "base_trajectory_nodes.json").read_text())), 40)
 

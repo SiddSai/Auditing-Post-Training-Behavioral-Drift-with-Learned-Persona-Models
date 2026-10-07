@@ -98,3 +98,13 @@ Do not pool all of these rows as independent models. Use official trajectory
 states for within-family drift and forecasting-style analyses; use outside
 descendants for out-of-lineage transfer; cluster uncertainty by trajectory or
 author/recipe family. This distinction is central to the paper's validity.
+
+## Runnable external panel
+
+The nine candidates marked `admit_after_native_interface_audit` are now also
+present in `manifests/wild_candidates.tsv` as `admit_not_causal`. This is the
+manifest consumed by the existing worker scripts, expanding the runnable
+external descendant panel from 12 to 21 models. Generate the formal interface
+manifest before launching generation; the worker will then render each model
+through its own pinned template. The candidate-audit table remains the
+authoritative record of why each external model was admitted.
