@@ -7,11 +7,11 @@ outcomes across the OLMo 3 post-training panel.
 ## Fixed panel and targets
 
 The assistant panel contains 50 official OLMo post-training nodes and 21
-audited observational descendants. Target prompts are the frozen 300
-development and 150 evaluation items from each released family. Target
-generation always uses each model's pinned native release template and greedy
-decoding; IFEval, XSTest, and Do-Not-Answer use their source-native local
-scorers.
+audited observational descendants. The initial result uses only the three
+families with local, source-native scorers: IFEval, XSTest, and Do-Not-Answer.
+Their frozen 300 development and 150 evaluation prompts are retained without
+resampling. Target generation always uses each model's pinned native release
+template and greedy decoding.
 
 ## Corrected anchor measurement
 

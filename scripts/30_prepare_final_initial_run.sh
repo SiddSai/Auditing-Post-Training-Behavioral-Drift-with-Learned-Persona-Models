@@ -10,8 +10,12 @@ bash scripts/20_prepare_native_v2_panel.sh
 anchors='data/anchors/anthropic_persona_direct_answer_v1.jsonl'
 persona-audit prepare-direct-answer-anchors \
   --input data/anchors/anthropic_persona_v1.jsonl --output "$anchors"
+persona-audit filter-target-families \
+  --input data/targets/single_turn_v1.jsonl \
+  --output data/targets/final_initial_native_three_v1.jsonl \
+  --families ifeval xstest do_not_answer
 persona-audit audit-target-anchor-disjointness \
-  --targets data/targets/single_turn_v1.jsonl --anchors "$anchors" \
+  --targets data/targets/final_initial_native_three_v1.jsonl --anchors "$anchors" \
   --output data/targets/single_turn_v1.direct_answer_anchor_disjointness.json
 persona-audit audit-direct-answer-tokenizers \
   --nodes data/panels/official_plus_posttrain_trajectory_v2.tsv \

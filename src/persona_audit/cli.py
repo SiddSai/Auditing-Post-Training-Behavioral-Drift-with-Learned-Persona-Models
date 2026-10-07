@@ -18,7 +18,7 @@ from .sources import (
 )
 from .state import fit_state
 from .target_inference import collect_target_observations, run_target_node, run_target_worker, load_targets
-from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, freeze_target_splits, import_target_pools, score_target_observations
+from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, filter_target_families, freeze_target_splits, import_target_pools, score_target_observations
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
 from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
@@ -69,6 +69,10 @@ def main(argv: list[str] | None = None) -> None:
     freeze_targets.add_argument("--development-size", type=int, default=300)
     freeze_targets.add_argument("--evaluation-size", type=int, default=150)
     freeze_targets.add_argument("--seed", type=int, default=20261005)
+    filter_targets = sub.add_parser("filter-target-families")
+    filter_targets.add_argument("--input", required=True)
+    filter_targets.add_argument("--output", required=True)
+    filter_targets.add_argument("--families", nargs="+", required=True)
     audit_targets = sub.add_parser("audit-target-anchor-disjointness")
     audit_targets.add_argument("--targets", required=True)
     audit_targets.add_argument("--anchors", required=True)
@@ -263,6 +267,8 @@ def main(argv: list[str] | None = None) -> None:
         import_target_pools(args.source_root, args.output)
     elif args.command == "freeze-target-splits":
         freeze_target_splits(args.pool, args.output, args.development_size, args.evaluation_size, args.seed)
+    elif args.command == "filter-target-families":
+        filter_target_families(args.input, args.output, set(args.families))
     elif args.command == "audit-target-anchor-disjointness":
         audit_target_anchor_disjointness(args.targets, args.anchors, args.output)
     elif args.command == "snapshot-anthropic-persona":

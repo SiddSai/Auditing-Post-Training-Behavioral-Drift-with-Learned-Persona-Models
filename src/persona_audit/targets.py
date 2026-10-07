@@ -137,6 +137,25 @@ def freeze_target_splits(pool: str | Path, output: str | Path, development_size:
     })
 
 
+def filter_target_families(input_path: str | Path, output_path: str | Path, families: set[str]) -> None:
+    """Materialize a declared subset without resampling or changing splits."""
+    source = read_jsonl(input_path)
+    available = {str(row["family"]) for row in source}
+    if not families or not families.issubset(available):
+        raise ManifestError(f"Requested target families {sorted(families)} are not a subset of {sorted(available)}")
+    selected = [row for row in source if row["family"] in families]
+    counts = Counter((row["family"], row["split"]) for row in selected)
+    for family in families:
+        if counts[(family, "development")] != 300 or counts[(family, "evaluation")] != 150:
+            raise ManifestError(f"{family} does not retain the frozen 300/150 split")
+    atomic_jsonl(output_path, selected)
+    atomic_json(Path(output_path).with_suffix(Path(output_path).suffix + ".metadata.json"), {
+        "input_sha256": file_sha256(input_path), "output_sha256": file_sha256(output_path),
+        "families": sorted(families), "selection": "Exact family filter; no resampling or prompt mutation.",
+        "counts": {f"{family}:{split}": count for (family, split), count in sorted(counts.items())},
+    })
+
+
 def audit_target_anchor_disjointness(targets: str | Path, anchors: str | Path, output: str | Path) -> None:
     """Record exact and high lexical-overlap pairs; never silently drop records."""
     def tokens(text: str) -> set[str]:

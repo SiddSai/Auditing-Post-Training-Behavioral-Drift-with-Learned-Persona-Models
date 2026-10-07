@@ -5,7 +5,7 @@ set -euo pipefail
 # robustness check. We report pooled, fold-macro, within-model, and model-rate
 # metrics, with template/stage metadata controls. No result-dependent model
 # choice occurs in this script.
-targets='data/targets/single_turn_v1.jsonl'
+targets='data/targets/final_initial_native_three_v1.jsonl'
 official='data/panels/official_plus_posttrain_trajectory_v2.tsv'
 wild='manifests/wild_candidates.tsv'
 anchors='data/anchors/anthropic_persona_direct_answer_v1.jsonl'
