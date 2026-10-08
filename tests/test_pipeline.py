@@ -11,7 +11,7 @@ from persona_audit.errors import ManifestError
 from persona_audit.inference import _compatibility_overlay, collect_observations
 from persona_audit.io import atomic_json, atomic_jsonl, file_sha256
 from persona_audit.manifests import Anchor, ModelNode, compose_node_manifests, filter_wild_nodes, load_anchors, load_nodes, load_wild_nodes
-from persona_audit.interfaces import render_anchor_prompts, render_direct_answer_anchor_prompts
+from persona_audit.interfaces import render_anchor_prompts, render_direct_answer_anchor_prompts, render_prompts_with_interface_mode
 from persona_audit.sources import import_anthropic_persona
 from persona_audit.splits import write_panel_splits
 from persona_audit.state import fit_state
@@ -21,7 +21,7 @@ from persona_audit.predictor import audit_predictor_results, prepare_predictor_o
 
 
 class PipelineTests(unittest.TestCase):
-    def test_direct_answer_protocol_uses_boundary_valid_candidates_and_removes_only_think_suffix(self) -> None:
+    def test_direct_answer_protocol_uses_published_empty_think_prefill(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "source.jsonl"
@@ -38,15 +38,20 @@ class PipelineTests(unittest.TestCase):
             class Tokenizer:
                 chat_template = "native-template"
                 def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
-                    return "<|assistant|>\\n<think>"
+                    return "<|assistant|>\n<think>"
 
             interface = {
                 "rendering": "native_chat_template", "add_generation_prompt": True,
                 "template_sha256": hashlib.sha256(b"native-template").hexdigest(),
             }
-            prompts, removed = render_direct_answer_anchor_prompts(Tokenizer(), [anchor], interface)
-            self.assertTrue(removed)
-            self.assertEqual(prompts, ["<|assistant|>\\n"])
+            prompts, applied = render_direct_answer_anchor_prompts(Tokenizer(), [anchor], interface)
+            self.assertTrue(applied)
+            self.assertEqual(prompts, ["<|assistant|>\n<think>\n</think>\n"])
+            target_prompts, target_applied = render_prompts_with_interface_mode(
+                Tokenizer(), [{"prompt_raw": "target"}], interface,
+            )
+            self.assertEqual(target_prompts, ["<|assistant|>\n<think>\n</think>\n"])
+            self.assertEqual(target_applied, [True])
 
     def test_compose_node_manifests_and_native_anchor_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

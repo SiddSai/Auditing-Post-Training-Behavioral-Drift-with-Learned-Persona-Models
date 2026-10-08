@@ -15,7 +15,7 @@ from typing import Any
 from .errors import InferenceError
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import Anchor, ModelNode, load_anchors, load_nodes, load_wild_nodes
-from .interfaces import load_interfaces, render_anchor_prompts, render_direct_answer_anchor_prompts
+from .interfaces import load_interfaces, render_anchor_prompts, render_direct_answer_anchor_prompts, render_think_not_thinking_anchor_prompts
 
 
 @dataclass(frozen=True)
@@ -192,8 +192,12 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
             think_trace_tokens: list[int | None] = [None] * len(batch)
             native_think_trace_used = False
             if interface:
-                if anchor_protocol == "direct_answer_no_think":
+                if anchor_protocol == "think_not_thinking_empty_prefill":
+                    prompts, think_empty_prefill_applied = render_think_not_thinking_anchor_prompts(tokenizer, batch, interface)
+                    think_suffix_removed = False
+                elif anchor_protocol == "direct_answer_no_think":
                     prompts, think_suffix_removed = render_direct_answer_anchor_prompts(tokenizer, batch, interface)
+                    think_empty_prefill_applied = think_suffix_removed
                 elif anchor_protocol == "native_think_then_answer":
                     prompts = render_anchor_prompts(tokenizer, batch, interface)
                     # The released Think template ends its generation prompt in
@@ -204,10 +208,13 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
                         think_trace_tokens = counts
                         native_think_trace_used = True
                     think_suffix_removed = False
+                    think_empty_prefill_applied = False
                 else:
                     prompts, think_suffix_removed = render_anchor_prompts(tokenizer, batch, interface), False
+                    think_empty_prefill_applied = False
             else:
                 prompts, think_suffix_removed = [anchor.prompt_raw for anchor in batch], False
+                think_empty_prefill_applied = False
             outputs = llm.generate(prompts, params, use_tqdm=False)
             for position, (anchor, output) in enumerate(zip(batch, outputs, strict=True)):
                 token_ids = _candidate_ids(tokenizer, anchor)
@@ -228,6 +235,7 @@ def _score_batch(llm: Any, tokenizer: Any, node: ModelNode, anchors: list[Anchor
                     "candidate_total_probability": float(sum(math.exp(value) for value in candidate_logps.values())),
                     "anchor_protocol": anchor_protocol,
                     "template_forced_think_suffix_removed": think_suffix_removed,
+                    "think_not_thinking_empty_prefill_applied": think_empty_prefill_applied,
                     "native_think_trace_used": native_think_trace_used,
                     "native_think_trace_tokens": think_trace_tokens[position],
                     "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_anchor_prompt"),

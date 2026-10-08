@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--think-max-tokens", type=int, default=512)
         command.add_argument("--interfaces", help="Pinned per-node rendering manifest; omit for raw anchor prompts")
         command.add_argument("--interface-renderings", nargs="+", choices=["raw_completion", "native_chat_template"], help="Restrict an interface-manifest run to selected rendering policies")
-        command.add_argument("--anchor-protocol", choices=["upstream_paired_choice", "direct_answer_no_think", "native_think_then_answer"], default="upstream_paired_choice")
+        command.add_argument("--anchor-protocol", choices=["upstream_paired_choice", "direct_answer_no_think", "native_think_then_answer", "think_not_thinking_empty_prefill"], default="upstream_paired_choice")
         command.add_argument("--node-ids-file", help="Optional newline-delimited subset of node IDs for a pre-registered pilot")
 
     node = sub.add_parser("run-node")

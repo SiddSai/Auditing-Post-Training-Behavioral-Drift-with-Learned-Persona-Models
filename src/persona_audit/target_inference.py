@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import InferenceError
-from .interfaces import load_interfaces, render_prompts
+from .interfaces import load_interfaces, render_prompts_with_interface_mode
 from .inference import EngineConfig, _compatibility_overlay, _download_node, claim_node
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import ModelNode, load_nodes, load_wild_nodes
@@ -36,17 +36,22 @@ def _generate(llm: Any, node: ModelNode, targets: list[dict[str, Any]], config: 
     rows: list[dict[str, Any]] = []
     for max_tokens, group in sorted(groups.items()):
         params = SamplingParams(temperature=0.0, max_tokens=max_tokens)
-        prompts = render_prompts(llm.get_tokenizer(), group, interface) if interface else [target["prompt_raw"] for target in group]
+        if interface:
+            prompts, think_empty_prefills = render_prompts_with_interface_mode(llm.get_tokenizer(), group, interface)
+        else:
+            prompts, think_empty_prefills = [target["prompt_raw"] for target in group], [False] * len(group)
         for start in range(0, len(group), config.batch_size):
             batch = group[start:start + config.batch_size]
             outputs = llm.generate(prompts[start:start + config.batch_size], params, use_tqdm=False)
-            for target, output in zip(batch, outputs, strict=True):
+            for target, output, think_empty_prefill in zip(batch, outputs, think_empty_prefills[start:start + config.batch_size], strict=True):
                 choice = output.outputs[0]
                 rows.append({
                     "node_id": node.node_id, "repo_id": node.repo_id, "model_sha": node.commit_sha,
                     "target_id": target["target_id"], "family": target["family"], "split": target["split"],
                     "completion": choice.text, "finish_reason": choice.finish_reason,
                     "completion_token_ids": list(choice.token_ids), "generation_max_tokens": max_tokens,
+                    "think_not_thinking_empty_prefill_applied": think_empty_prefill,
+                    "interface_mode": ("olmo_think_not_thinking_empty_prefill" if think_empty_prefill else "native_direct_assistant_boundary"),
                     "protocol": ("native_tokenizer_chat_template_one_user_turn_no_system_message" if interface and interface["rendering"] == "native_chat_template" else "raw_source_prompt_greedy_no_chat_template_or_system_message"),
                 })
     return rows

@@ -216,16 +216,16 @@ def _metadata_features(
     not behavioral target labels.
     """
     official = {node.node_id: node for node in load_nodes(nodes_path)}
-    think_suffix: dict[str, bool] = {}
+    think_empty_prefill: dict[str, bool] = {}
     think_trace: dict[str, bool] = {}
     for row in read_jsonl(anchor_observations):
         node_id = str(row["node_id"])
         if node_id not in all_nodes:
             continue
-        observed = bool(row.get("template_forced_think_suffix_removed", False))
-        if node_id in think_suffix and think_suffix[node_id] != observed:
+        observed = bool(row.get("think_not_thinking_empty_prefill_applied", row.get("template_forced_think_suffix_removed", False)))
+        if node_id in think_empty_prefill and think_empty_prefill[node_id] != observed:
             raise ManifestError(f"Inconsistent template Think flag for {node_id}")
-        think_suffix[node_id] = observed
+        think_empty_prefill[node_id] = observed
         traced = bool(row.get("native_think_trace_used", False))
         if node_id in think_trace and think_trace[node_id] != traced:
             raise ManifestError(f"Inconsistent native Think-trace flag for {node_id}")
@@ -235,13 +235,12 @@ def _metadata_features(
         phase = official[node_id].phase if node_id in official else "external"
         # Backwards-compatible fallback lets synthetic tests omit the newly
         # recorded rendering field while retaining the stage control.
-        think = float(think_suffix.get(node_id, "think" in phase))
+        think = float(think_empty_prefill.get(node_id, "think" in phase))
         external = float(node_id not in official)
         sft, dpo, rlvr = (float(phase.endswith(suffix)) for suffix in ("_sft", "_dpo", "_rlvr"))
-        # ``think_trace`` is an explicit interface control for the valid
-        # native-think measurement protocol. It must never be mistaken for a
-        # persona direction: it captures that a Think model reaches its answer
-        # boundary after a generated reasoning trace.
+        # ``think_trace`` is retained solely for backwards compatibility with
+        # old experimental runs. The standardized primary protocol never
+        # generates a chain of thought before measuring the answer boundary.
         trace = float(think_trace.get(node_id, False))
         values[node_id] = np.asarray([think, trace, external, sft, dpo, rlvr], dtype=float)
     return values
@@ -451,7 +450,7 @@ def run_predictor_experiment(
         "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
         "splits": {name: {"reported_split": name.split("::", 1)[0], "train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
         "variants": sorted(executed_variants), "outcome_protocols": OUTCOME_PROTOCOLS,
-        "metadata_controls": ["template_forced_think_suffix", "native_think_trace", "external_descendant", "official_stage_sft", "official_stage_dpo", "official_stage_rlvr"],
+        "metadata_controls": ["think_not_thinking_empty_prefill", "legacy_native_think_trace", "external_descendant", "official_stage_sft", "official_stage_dpo", "official_stage_rlvr"],
         "interpretation": "This is concurrent held-out behavioral prediction, not a future-state forecast.",
     })
 

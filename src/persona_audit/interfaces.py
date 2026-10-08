@@ -11,6 +11,13 @@ from .io import atomic_jsonl, read_jsonl
 from .manifests import Anchor, ModelNode, load_nodes, load_wild_nodes
 
 
+# Karouzos et al., "Where does output diversity collapse in post-training?"
+# evaluate OLMo 3 Think checkpoints without a reasoning trace by pre-filling
+# this exact empty block.  Keep this as a literal rather than a reconstructed
+# chat turn: the native template has already emitted ``<think>``.
+THINK_NOT_THINKING_EMPTY_SUFFIX = "\n</think>\n"
+
+
 def _sha256(value: bytes | str) -> str:
     if isinstance(value, str):
         value = value.encode("utf-8")
@@ -87,18 +94,43 @@ def load_interfaces(path: str | Path, nodes: list[ModelNode]) -> dict[str, dict[
     return values
 
 
-def render_prompts(tokenizer: Any, targets: list[dict[str, Any]], interface: dict[str, Any]) -> list[str]:
+def _append_think_not_thinking_empty_block(prompt: str) -> tuple[str, bool]:
+    """Close an already-open native OLMo Think block without generating CoT.
+
+    This is deliberately conditional on the exact rendered template boundary,
+    never on a model name, phase, or model-card claim.  It produces the
+    published sequence ``<think>\n</think>\n`` when the template ends in
+    ``<think>``.  Whitespace *after* that tag is replaced so that the final
+    boundary is deterministic.
+    """
+    trimmed = prompt.rstrip()
+    if not trimmed.endswith("<think>"):
+        return prompt, False
+    return trimmed + THINK_NOT_THINKING_EMPTY_SUFFIX, True
+
+
+def render_prompts_with_interface_mode(
+    tokenizer: Any, targets: list[dict[str, Any]], interface: dict[str, Any],
+) -> tuple[list[str], list[bool]]:
+    """Render target prompts and record use of the controlled Think condition."""
     if interface["rendering"] == "raw_completion":
-        return [target["prompt_raw"] for target in targets]
+        return [target["prompt_raw"] for target in targets], [False] * len(targets)
     template = getattr(tokenizer, "chat_template", None)
     if not isinstance(template, str) or not template.strip():
         raise InferenceError("Pinned native chat template was absent after tokenizer load")
     if _sha256(template) != interface["template_sha256"]:
         raise InferenceError("Loaded chat template hash differs from audited interface manifest")
-    return [tokenizer.apply_chat_template(
+    native_prompts = [tokenizer.apply_chat_template(
         [{"role": "user", "content": target["prompt_raw"]}],
         tokenize=False, add_generation_prompt=bool(interface["add_generation_prompt"]),
     ) for target in targets]
+    rendered = [_append_think_not_thinking_empty_block(prompt) for prompt in native_prompts]
+    return [prompt for prompt, _ in rendered], [applied for _, applied in rendered]
+
+
+def render_prompts(tokenizer: Any, targets: list[dict[str, Any]], interface: dict[str, Any]) -> list[str]:
+    """Backward-compatible prompt-only wrapper for target rendering."""
+    return render_prompts_with_interface_mode(tokenizer, targets, interface)[0]
 
 
 def render_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any]) -> list[str]:
@@ -121,28 +153,24 @@ def render_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict
     ) for anchor in anchors]
 
 
-def render_direct_answer_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any]) -> tuple[list[str], bool]:
-    """Render fixed-choice anchors at a direct assistant boundary.
+def render_think_not_thinking_anchor_prompts(
+    tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any],
+) -> tuple[list[str], bool]:
+    """Render fixed-choice anchors under the published OLMo direct condition.
 
-    OLMo Think release templates add ``<think>`` at generation time.  For a
-    standardized *direct-answer measurement* we remove precisely that terminal
-    inference suffix, leaving the pinned template's system/user/assistant
-    structure untouched.  This is not used for behavioral target generation.
+    Instruct templates retain their native assistant boundary.  A template
+    whose exact native rendering opens ``<think>`` instead receives an empty
+    ``<think>\n</think>\n`` prefill before Yes/No is scored.  The same
+    controlled interface is used for target completions.
     """
     prompts = render_anchor_prompts(tokenizer, anchors, interface)
-    if interface["rendering"] == "raw_completion":
-        return prompts, False
-    stripped: list[str] = []
-    removed_any = False
-    for prompt in prompts:
-        trimmed = prompt.rstrip()
-        if trimmed.endswith("<think>"):
-            # Retain exactly the native prefix before the suffix, including
-            # its assistant-header newline; remove only trailing whitespace
-            # that was after <think>.
-            suffix_start = len(trimmed) - len("<think>")
-            stripped.append(trimmed[:suffix_start])
-            removed_any = True
-        else:
-            stripped.append(prompt)
-    return stripped, removed_any
+    rendered = [_append_think_not_thinking_empty_block(prompt) for prompt in prompts]
+    applied = {value for _, value in rendered}
+    if len(applied) != 1:
+        raise InferenceError("One node rendered a mixed Think/non-Think anchor batch")
+    return [prompt for prompt, _ in rendered], next(iter(applied))
+
+
+def render_direct_answer_anchor_prompts(tokenizer: Any, anchors: list[Anchor], interface: dict[str, Any]) -> tuple[list[str], bool]:
+    """Legacy alias retained for old runs; new work uses the published prefill."""
+    return render_think_not_thinking_anchor_prompts(tokenizer, anchors, interface)
