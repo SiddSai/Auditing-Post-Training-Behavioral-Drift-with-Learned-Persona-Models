@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -33,6 +34,10 @@ OUTCOME_PROTOCOLS = {
     "do_not_answer": "released response-only Longformer harmfulness evaluator; LABEL_0 is non-harmful",
     "sycophancy": "released SycophancyEval factual-correctness template/parser with recorded modern judge output",
 }
+
+# Target prompts repeat in every leave-one-model-out fold. Cache their frozen
+# vectors so contextual evaluation is CPU-efficient and deterministic.
+_PROMPT_EMBEDDING_CACHE: dict[tuple[str, str | None, str], np.ndarray] = {}
 
 
 @dataclass(frozen=True)
@@ -158,6 +163,26 @@ def _states_for_fold(
     return ({node: transformed[index] for index, node in enumerate(all_nodes)}, geometry)
 
 
+@lru_cache(maxsize=4)
+def _load_frozen_sentence_encoder(model_name: str, device: str | None) -> Any:
+    """Cache the immutable encoder across model/family CV folds."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise ManifestError("sentence_transformer prompts require `pip install -e '.[analysis]'`") from exc
+    return SentenceTransformer(model_name, device=device)
+
+
+def _encode_frozen_texts(texts: list[str], model_name: str, device: str | None) -> np.ndarray:
+    missing = [text for text in dict.fromkeys(texts) if (model_name, device, text) not in _PROMPT_EMBEDDING_CACHE]
+    if missing:
+        encoder = _load_frozen_sentence_encoder(model_name, device)
+        encoded = encoder.encode(missing, normalize_embeddings=True, show_progress_bar=False)
+        for text, vector in zip(missing, encoded, strict=True):
+            _PROMPT_EMBEDDING_CACHE[(model_name, device, text)] = np.asarray(vector, dtype=float)
+    return np.stack([_PROMPT_EMBEDDING_CACHE[(model_name, device, text)] for text in texts])
+
+
 def _prompt_features(train_text: list[str], test_text: list[str], dimensions: int, representation: str = "tfidf", embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2", embedding_device: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     # Character-free word n-grams keep the feature a pure function of source
     # prompt text and avoid downloading another learned model for the baseline.
@@ -172,15 +197,10 @@ def _prompt_features(train_text: list[str], test_text: list[str], dimensions: in
         return reducer.fit_transform(train_sparse), reducer.transform(test_sparse)
     if representation != "sentence_transformer":
         raise ManifestError("prompt_representation must be 'tfidf' or 'sentence_transformer'")
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError as exc:
-        raise ManifestError("sentence_transformer prompts require `pip install -e '.[analysis]'`") from exc
     # Frozen encoder: no benchmark outcomes or model identities affect this
     # representation. The subsequent SVD is fit on training prompts only.
-    encoder = SentenceTransformer(embedding_model, device=embedding_device)
-    train_dense = np.asarray(encoder.encode(train_text, normalize_embeddings=True, show_progress_bar=False), dtype=float)
-    test_dense = np.asarray(encoder.encode(test_text, normalize_embeddings=True, show_progress_bar=False), dtype=float)
+    train_dense = _encode_frozen_texts(train_text, embedding_model, embedding_device)
+    test_dense = _encode_frozen_texts(test_text, embedding_model, embedding_device)
     n_components = min(dimensions, train_dense.shape[0] - 1, train_dense.shape[1])
     reducer = PCA(n_components=max(1, n_components), random_state=0)
     return reducer.fit_transform(train_dense), reducer.transform(test_dense)
