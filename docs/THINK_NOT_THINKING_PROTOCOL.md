@@ -44,3 +44,14 @@ Every observation records whether the prefill was applied.  It is also a
 metadata control in the predictor.  A separate, explicitly labeled native
 free-reasoning ablation may be run later; it is not mixed into the primary
 result.
+
+## Panel validity decision
+
+The frozen 48-anchor pilot applied this exact condition to all 71 candidate
+assistant models.  One observational descendant,
+`AS-SiliconMind/SiliconMind-V1-Olmo-3-7B-Think`, still had median total
+probability mass `3.53e-5` on the forced `{Yes, No}` set, below the
+predeclared `1e-4` validity threshold.  It is therefore retained in the source
+candidate registry but excluded from the 70-model standardized primary panel.
+This is a measurement-validity exclusion, not an assertion about its safety or
+behavior, and avoids inventing a model-specific prompt repair.
