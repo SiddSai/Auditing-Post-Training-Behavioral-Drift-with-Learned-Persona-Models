@@ -22,6 +22,7 @@ from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, filter_ta
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
 from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
+from .analysis import analyze_trajectory_drift, audit_anchor_panel
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -238,7 +239,12 @@ def main(argv: list[str] | None = None) -> None:
     predictor.add_argument("--state-dimensions", type=int, default=8)
     predictor.add_argument("--prompt-dimensions", type=int, default=32)
     predictor.add_argument("--c", type=float, default=0.2)
-    predictor.add_argument("--state-method", choices=["pca", "factor"], default="pca")
+    predictor.add_argument("--state-method", choices=["pca", "factor", "soft_irt"], default="pca")
+    predictor.add_argument("--prompt-representation", choices=["tfidf", "sentence_transformer"], default="tfidf")
+    predictor.add_argument("--prompt-embedding-model", default="sentence-transformers/all-MiniLM-L6-v2")
+    predictor.add_argument("--prompt-embedding-device")
+    predictor.add_argument("--bilinear-rank", type=int, default=2)
+    predictor.add_argument("--include-bilinear", action="store_true")
     predictor.add_argument("--analysis-panel", choices=["all", "native_posttrain", "native_all_prompt_holdout", "native_leave_one_model_out", "native_leave_one_lineage_out"], default="all")
     audit_predictor = sub.add_parser("audit-predictor")
     audit_predictor.add_argument("--predictions", required=True)
@@ -248,6 +254,24 @@ def main(argv: list[str] | None = None) -> None:
     predictor_report = sub.add_parser("report-predictor")
     predictor_report.add_argument("--run-root", required=True)
     predictor_report.add_argument("--output", required=True)
+    anchor_audit = sub.add_parser("audit-anchor-panel")
+    anchor_audit.add_argument("--observations", required=True)
+    anchor_audit.add_argument("--anchors", required=True)
+    anchor_audit.add_argument("--nodes", required=True)
+    anchor_audit.add_argument("--wild-nodes")
+    anchor_audit.add_argument("--output-dir", required=True)
+    anchor_audit.add_argument("--dimensions", type=int, default=4)
+    anchor_audit.add_argument("--split-half-repeats", type=int, default=100)
+    anchor_audit.add_argument("--assistant-only", action="store_true")
+    trajectory = sub.add_parser("analyze-trajectory-drift")
+    trajectory.add_argument("--observations", required=True)
+    trajectory.add_argument("--anchors", required=True)
+    trajectory.add_argument("--nodes", required=True)
+    trajectory.add_argument("--edges", required=True)
+    trajectory.add_argument("--outcomes", required=True)
+    trajectory.add_argument("--output-dir", required=True)
+    trajectory.add_argument("--state-method", choices=["pca", "factor", "soft_irt"], default="pca")
+    trajectory.add_argument("--state-dimensions", type=int, default=4)
 
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
@@ -255,7 +279,7 @@ def main(argv: list[str] | None = None) -> None:
     state.add_argument("--fit-nodes", required=True, help="JSON list of development node IDs")
     state.add_argument("--transform-nodes", required=True, help="JSON list of node IDs to transform")
     state.add_argument("--output-dir", required=True)
-    state.add_argument("--method", choices=["pca", "factor"], default="pca")
+    state.add_argument("--method", choices=["pca", "factor", "soft_irt"], default="pca")
     state.add_argument("--dimensions", type=int, default=8)
     state.add_argument("--feature", choices=["behavior_logit_margin", "behavior_probability"], default="behavior_logit_margin")
 
@@ -349,11 +373,16 @@ def main(argv: list[str] | None = None) -> None:
             args.wild_nodes, args.output_dir, args.state_dimensions, args.prompt_dimensions, args.c,
             args.state_method,
             args.analysis_panel,
+            args.prompt_representation, args.prompt_embedding_model, args.prompt_embedding_device, args.bilinear_rank, args.include_bilinear,
         )
     elif args.command == "audit-predictor":
         audit_predictor_results(args.predictions, args.state_geometry, args.output_dir, args.bootstrap_replicates)
     elif args.command == "report-predictor":
         write_predictor_report(args.run_root, args.output)
+    elif args.command == "audit-anchor-panel":
+        audit_anchor_panel(args.observations, args.anchors, args.nodes, args.output_dir, args.dimensions, args.split_half_repeats, 20261008, args.wild_nodes, args.assistant_only)
+    elif args.command == "analyze-trajectory-drift":
+        analyze_trajectory_drift(args.observations, args.anchors, args.nodes, args.edges, args.outcomes, args.output_dir, args.state_method, args.state_dimensions)
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

@@ -26,6 +26,11 @@ scoring = [
   "google-generativeai>=0.8",
   "openai>=1.0",
 ]
+analysis = [
+  # Frozen text embeddings are an ablation for the contextual decoder. They
+  # never receive target labels or model identities during encoding.
+  "sentence-transformers>=3.0",
+]
 
 [project.scripts]
 persona-audit = "persona_audit.cli:main"

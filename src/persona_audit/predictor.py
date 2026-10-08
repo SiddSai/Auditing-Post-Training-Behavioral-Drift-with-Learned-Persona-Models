@@ -19,11 +19,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, brier_score_loss, log_loss, roc_auc_score
 from sklearn.preprocessing import StandardScaler
+from scipy.optimize import minimize
 
 from .errors import ManifestError
 from .io import atomic_json, atomic_jsonl, file_sha256, read_jsonl
 from .manifests import ModelNode, load_anchors, load_nodes, load_wild_nodes
-from .state import _load_observation_matrix
+from .state import SoftIRTState, _load_observation_matrix
 
 
 OUTCOME_PROTOCOLS = {
@@ -126,8 +127,21 @@ def _states_for_fold(
         encoder = PCA(n_components=dimensions, random_state=0)
     elif method == "factor":
         encoder = FactorAnalysis(n_components=dimensions, random_state=0)
+    elif method == "soft_irt":
+        probability_matrix = _load_observation_matrix(anchor_observations, all_nodes, anchor_ids, "behavior_probability")[1]
+        encoder = SoftIRTState(dimensions=dimensions).fit(probability_matrix[train_indices])
+        transformed = encoder.transform(probability_matrix)
+        train_state = transformed[train_indices]
+        covariance = np.cov(train_state, rowvar=False) + np.eye(dimensions) * 1e-6
+        precision = np.linalg.pinv(covariance)
+        lower, upper = train_state.min(axis=0), train_state.max(axis=0)
+        geometry = {}
+        for index, node in enumerate(all_nodes):
+            delta = transformed[index] - train_state.mean(axis=0)
+            geometry[node] = {"mahalanobis_sq": float(delta @ precision @ delta), "within_train_coordinate_range": bool(np.all((transformed[index] >= lower) & (transformed[index] <= upper)))}
+        return ({node: transformed[index] for index, node in enumerate(all_nodes)}, geometry)
     else:
-        raise ManifestError("state_method must be 'pca' or 'factor'")
+        raise ManifestError("state_method must be 'pca', 'factor', or 'soft_irt'")
     encoder.fit(scaler.transform(matrix)[train_indices])
     transformed = encoder.transform(scaler.transform(matrix))
     train_state = transformed[train_indices]
@@ -144,17 +158,76 @@ def _states_for_fold(
     return ({node: transformed[index] for index, node in enumerate(all_nodes)}, geometry)
 
 
-def _prompt_features(train_text: list[str], test_text: list[str], dimensions: int) -> tuple[np.ndarray, np.ndarray]:
+def _prompt_features(train_text: list[str], test_text: list[str], dimensions: int, representation: str = "tfidf", embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2", embedding_device: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     # Character-free word n-grams keep the feature a pure function of source
     # prompt text and avoid downloading another learned model for the baseline.
-    vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=2000, sublinear_tf=True, strip_accents="unicode")
-    train_sparse = vectorizer.fit_transform(train_text)
-    test_sparse = vectorizer.transform(test_text)
-    if train_sparse.shape[1] < 2:
-        return np.zeros((len(train_text), 1)), np.zeros((len(test_text), 1))
-    n_components = min(dimensions, train_sparse.shape[0] - 1, train_sparse.shape[1] - 1)
-    reducer = TruncatedSVD(n_components=max(1, n_components), random_state=0)
-    return reducer.fit_transform(train_sparse), reducer.transform(test_sparse)
+    if representation == "tfidf":
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=2000, sublinear_tf=True, strip_accents="unicode")
+        train_sparse = vectorizer.fit_transform(train_text)
+        test_sparse = vectorizer.transform(test_text)
+        if train_sparse.shape[1] < 2:
+            return np.zeros((len(train_text), 1)), np.zeros((len(test_text), 1))
+        n_components = min(dimensions, train_sparse.shape[0] - 1, train_sparse.shape[1] - 1)
+        reducer = TruncatedSVD(n_components=max(1, n_components), random_state=0)
+        return reducer.fit_transform(train_sparse), reducer.transform(test_sparse)
+    if representation != "sentence_transformer":
+        raise ManifestError("prompt_representation must be 'tfidf' or 'sentence_transformer'")
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise ManifestError("sentence_transformer prompts require `pip install -e '.[analysis]'`") from exc
+    # Frozen encoder: no benchmark outcomes or model identities affect this
+    # representation. The subsequent SVD is fit on training prompts only.
+    encoder = SentenceTransformer(embedding_model, device=embedding_device)
+    train_dense = np.asarray(encoder.encode(train_text, normalize_embeddings=True, show_progress_bar=False), dtype=float)
+    test_dense = np.asarray(encoder.encode(test_text, normalize_embeddings=True, show_progress_bar=False), dtype=float)
+    n_components = min(dimensions, train_dense.shape[0] - 1, train_dense.shape[1])
+    reducer = PCA(n_components=max(1, n_components), random_state=0)
+    return reducer.fit_transform(train_dense), reducer.transform(test_dense)
+
+
+def _low_rank_bilinear_probability(train_state: np.ndarray, train_prompt: np.ndarray, y_train: np.ndarray, test_state: np.ndarray, test_prompt: np.ndarray, rank: int, c: float) -> np.ndarray:
+    """Fit a regularized contextual-MIRT-style low-rank interaction decoder.
+
+    The interaction matrix is W=UV^T, so this learns which prompt directions
+    interact with which state directions without the O(d_state*d_prompt)
+    degrees of freedom of the legacy full interaction baseline.
+    """
+    state_scaler, prompt_scaler = StandardScaler().fit(train_state), StandardScaler().fit(train_prompt)
+    z, x = state_scaler.transform(train_state), prompt_scaler.transform(train_prompt)
+    z_test, x_test = state_scaler.transform(test_state), prompt_scaler.transform(test_prompt)
+    d_state, d_prompt = z.shape[1], x.shape[1]
+    rank = min(rank, d_state, d_prompt)
+    penalty = 1.0 / c
+    rng = np.random.default_rng(0)
+    # intercept, state main effect, prompt main effect, U, V
+    initial = np.concatenate([[float(np.log((y_train.mean() + 1e-4) / (1 - y_train.mean() + 1e-4)))], np.zeros(d_state + d_prompt), rng.normal(0, .02, d_state * rank + d_prompt * rank)])
+    def unpack(theta: np.ndarray) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        index = 0; intercept = theta[index]; index += 1
+        state_main = theta[index:index + d_state]; index += d_state
+        prompt_main = theta[index:index + d_prompt]; index += d_prompt
+        left = theta[index:index + d_state * rank].reshape(d_state, rank); index += d_state * rank
+        right = theta[index:].reshape(d_prompt, rank)
+        return intercept, state_main, prompt_main, left, right
+    def objective(theta: np.ndarray) -> tuple[float, np.ndarray]:
+        intercept, state_main, prompt_main, left, right = unpack(theta)
+        z_projection, x_projection = z @ left, x @ right
+        logits = intercept + z @ state_main + x @ prompt_main + np.sum(z_projection * x_projection, axis=1)
+        probability = np.clip(1 / (1 + np.exp(-np.clip(logits, -35, 35))), 1e-8, 1 - 1e-8)
+        n = len(y_train); error = probability - y_train
+        unregularized = np.concatenate([[intercept], state_main, prompt_main, left.ravel(), right.ravel()])
+        value = -np.mean(y_train * np.log(probability) + (1 - y_train) * np.log(1 - probability)) + .5 * penalty * np.sum(unregularized[1:] ** 2) / n
+        gradient = np.concatenate([
+            [error.mean()], z.T @ error / n, x.T @ error / n,
+            (z.T @ (error[:, None] * x_projection) / n).ravel(),
+            (x.T @ (error[:, None] * z_projection) / n).ravel(),
+        ])
+        gradient[1:] += penalty * theta[1:] / n
+        return float(value), gradient
+    fit = minimize(objective, initial, jac=True, method="L-BFGS-B", options={"maxiter": 150, "ftol": 1e-9})
+    intercept, state_main, prompt_main, left, right = unpack(fit.x)
+    logits = intercept + z_test @ state_main + x_test @ prompt_main + np.sum((z_test @ left) * (x_test @ right), axis=1)
+    return 1 / (1 + np.exp(-np.clip(logits, -35, 35)))
 
 
 def _features(states: np.ndarray, prompts: np.ndarray, metadata: np.ndarray, calibration: np.ndarray | None, variant: str) -> np.ndarray:
@@ -342,10 +415,15 @@ def run_predictor_experiment(
     c: float = 0.2,
     state_method: str = "pca",
     analysis_panel: str = "all",
+    prompt_representation: str = "tfidf",
+    prompt_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+    prompt_embedding_device: str | None = None,
+    bilinear_rank: int = 2,
+    include_bilinear: bool = False,
 ) -> None:
     """Run pre-specified model/prompt holdouts and write row-level predictions."""
-    if state_dimensions < 1 or prompt_dimensions < 1 or c <= 0:
-        raise ManifestError("state_dimensions, prompt_dimensions, and c must be positive")
+    if state_dimensions < 1 or prompt_dimensions < 1 or c <= 0 or bilinear_rank < 1:
+        raise ManifestError("state_dimensions, prompt_dimensions, c, and bilinear_rank must be positive")
     target_by_id = {row["target_id"]: row for row in read_jsonl(targets)}
     outcome_rows = read_jsonl(outcomes)
     # A native-interface panel intentionally excludes raw-completion base
@@ -368,7 +446,7 @@ def run_predictor_experiment(
     destination = Path(output_dir); destination.mkdir(parents=True, exist_ok=True)
     predictions: list[dict[str, Any]] = []
     geometry_rows: list[dict[str, Any]] = []
-    base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction")
+    base_variants = ("prompt_only", "metadata_only", "state_only", "prompt_plus_metadata", "state_plus_metadata", "additive", "full_additive", "interaction") + (("low_rank_bilinear",) if include_bilinear else ())
     calibration_variants = ("development_rate_only", "prompt_plus_development_rate", "state_plus_development_rate", "full_plus_development_rate")
     executed_variants: set[str] = set()
     metadata_by_node = _metadata_features(nodes, wild_nodes, all_node_ids, anchor_observations)
@@ -402,7 +480,7 @@ def run_predictor_experiment(
                 continue
             train_prompts = [target_by_id[row["target_id"]]["prompt_raw"] for row in train]
             test_prompts = [target_by_id[row["target_id"]]["prompt_raw"] for row in test]
-            train_p, test_p = _prompt_features(train_prompts, test_prompts, prompt_dimensions)
+            train_p, test_p = _prompt_features(train_prompts, test_prompts, prompt_dimensions, prompt_representation, prompt_embedding_model, prompt_embedding_device)
             train_s = np.stack([states[row["node_id"]] for row in train])
             test_s = np.stack([states[row["node_id"]] for row in test])
             train_m = np.stack([metadata_by_node[row["node_id"]] for row in train])
@@ -416,6 +494,8 @@ def run_predictor_experiment(
                 executed_variants.add(variant)
                 if variant == "development_rate_only":
                     probability = calibration_test[:, 0]
+                elif variant == "low_rank_bilinear":
+                    probability = _low_rank_bilinear_probability(train_s, train_p, y_train, test_s, test_p, bilinear_rank, c)
                 else:
                     x_train = _features(train_s, train_p, train_m, calibration_train, variant)
                     x_test = _features(test_s, test_p, test_m, calibration_test, variant)
@@ -448,6 +528,7 @@ def run_predictor_experiment(
         "targets_sha256": file_sha256(targets), "outcomes_sha256": file_sha256(outcomes),
         "nodes_sha256": file_sha256(nodes), "wild_nodes_sha256": file_sha256(wild_nodes),
         "analysis_panel": analysis_panel, "state_method": state_method, "state_dimensions": state_dimensions, "prompt_dimensions": prompt_dimensions, "logistic_regression_c": c,
+        "prompt_representation": prompt_representation, "prompt_embedding_model": prompt_embedding_model if prompt_representation == "sentence_transformer" else None, "bilinear_rank": bilinear_rank, "include_bilinear": include_bilinear,
         "splits": {name: {"reported_split": name.split("::", 1)[0], "train_nodes": train, "test_nodes": test} for name, (train, test) in split_specs.items()},
         "variants": sorted(executed_variants), "outcome_protocols": OUTCOME_PROTOCOLS,
         "metadata_controls": ["think_not_thinking_empty_prefill", "legacy_native_think_trace", "external_descendant", "official_stage_sft", "official_stage_dpo", "official_stage_rlvr"],
@@ -467,6 +548,10 @@ def _bootstrap_variant_deltas(rows: list[dict[str, Any]], replicates: int, seed:
         ("state_only", "prompt_only"),
         ("additive", "prompt_only"),
         ("interaction", "prompt_only"),
+        ("low_rank_bilinear", "prompt_only"),
+        # This is the key confounding diagnostic: the state must add to cheap
+        # stage/interface metadata, not merely rediscover Think vs Instruct.
+        ("full_additive", "prompt_plus_metadata"),
         ("prompt_plus_development_rate", "prompt_only"),
         ("full_plus_development_rate", "prompt_plus_development_rate"),
     )
@@ -643,6 +728,6 @@ def write_predictor_report(run_root: str | Path, output_path: str | Path) -> Non
     atomic_json(destination.with_suffix(".metadata.json"), {
         "run_root": str(root),
         "purpose": "Descriptive report of every predeclared representation. It does not select a winning dimension or method using held-out metrics.",
-        "required_primary_comparisons": ["additive vs prompt_only", "full_plus_development_rate vs prompt_plus_development_rate"],
+        "required_primary_comparisons": ["additive vs prompt_only", "full_additive vs prompt_plus_metadata", "full_plus_development_rate vs prompt_plus_development_rate"],
         "caution": "The current 12 wild descendants have already participated in the prompt-held-out analysis; any official-to-wild rerun is exploratory, not a fresh confirmatory model holdout.",
     })
