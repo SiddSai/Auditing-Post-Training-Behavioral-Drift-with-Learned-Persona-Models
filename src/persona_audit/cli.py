@@ -23,6 +23,7 @@ from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do
 from .interfaces import build_native_interface_manifest, load_interfaces
 from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
 from .analysis import analyze_trajectory_drift, audit_anchor_panel, build_state_score_atlas
+from .decision_suite import run_bottleneck_decision_suite
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -284,6 +285,16 @@ def main(argv: list[str] | None = None) -> None:
     atlas.add_argument("--dimensions", type=int, default=4)
     atlas.add_argument("--clusters", type=int, default=4)
 
+    decision = sub.add_parser("run-bottleneck-decision-suite")
+    decision.add_argument("--observations", required=True)
+    decision.add_argument("--anchors", required=True)
+    decision.add_argument("--nodes", required=True)
+    decision.add_argument("--wild-nodes", required=True)
+    decision.add_argument("--outcomes", required=True)
+    decision.add_argument("--output-dir", required=True)
+    decision.add_argument("--dimensions", type=int, default=4)
+    decision.add_argument("--repeats", type=int, default=40)
+
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
     state.add_argument("--anchors", required=True)
@@ -398,6 +409,11 @@ def main(argv: list[str] | None = None) -> None:
         build_state_score_atlas(
             args.observations, args.anchors, args.nodes, args.wild_nodes,
             args.outcomes, args.output_dir, args.edges, args.dimensions, args.clusters,
+        )
+    elif args.command == "run-bottleneck-decision-suite":
+        run_bottleneck_decision_suite(
+            args.observations, args.anchors, args.nodes, args.wild_nodes,
+            args.outcomes, args.output_dir, args.dimensions, args.repeats,
         )
     elif args.command == "fit-state":
         fit_state(
