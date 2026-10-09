@@ -22,7 +22,7 @@ from .targets import TARGET_SOURCES, audit_target_anchor_disjointness, filter_ta
 from .benchmark_scoring import apply_judge_responses, run_openai_judge, score_do_not_answer_longformer, score_ifeval_native, score_truthfulqa_gemini, score_xstest_native, write_native_inputs
 from .interfaces import build_native_interface_manifest, load_interfaces
 from .predictor import audit_predictor_results, prepare_predictor_outcomes, run_predictor_experiment, write_predictor_report
-from .analysis import analyze_trajectory_drift, audit_anchor_panel
+from .analysis import analyze_trajectory_drift, audit_anchor_panel, build_state_score_atlas
 
 
 def _config(args: argparse.Namespace) -> EngineConfig:
@@ -273,6 +273,17 @@ def main(argv: list[str] | None = None) -> None:
     trajectory.add_argument("--state-method", choices=["pca", "factor", "soft_irt"], default="pca")
     trajectory.add_argument("--state-dimensions", type=int, default=4)
 
+    atlas = sub.add_parser("build-state-score-atlas")
+    atlas.add_argument("--observations", required=True)
+    atlas.add_argument("--anchors", required=True)
+    atlas.add_argument("--nodes", required=True)
+    atlas.add_argument("--wild-nodes", required=True)
+    atlas.add_argument("--outcomes", required=True)
+    atlas.add_argument("--output-dir", required=True)
+    atlas.add_argument("--edges")
+    atlas.add_argument("--dimensions", type=int, default=4)
+    atlas.add_argument("--clusters", type=int, default=4)
+
     state = sub.add_parser("fit-state")
     state.add_argument("--observations", required=True)
     state.add_argument("--anchors", required=True)
@@ -383,6 +394,11 @@ def main(argv: list[str] | None = None) -> None:
         audit_anchor_panel(args.observations, args.anchors, args.nodes, args.output_dir, args.dimensions, args.split_half_repeats, 20261008, args.wild_nodes, args.assistant_only)
     elif args.command == "analyze-trajectory-drift":
         analyze_trajectory_drift(args.observations, args.anchors, args.nodes, args.edges, args.outcomes, args.output_dir, args.state_method, args.state_dimensions)
+    elif args.command == "build-state-score-atlas":
+        build_state_score_atlas(
+            args.observations, args.anchors, args.nodes, args.wild_nodes,
+            args.outcomes, args.output_dir, args.edges, args.dimensions, args.clusters,
+        )
     elif args.command == "fit-state":
         fit_state(
             args.observations, args.anchors, json.loads(Path(args.fit_nodes).read_text()),

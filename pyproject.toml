@@ -30,6 +30,7 @@ analysis = [
   # Frozen text embeddings are an ablation for the contextual decoder. They
   # never receive target labels or model identities during encoding.
   "sentence-transformers>=3.0",
+  "matplotlib>=3.7",
 ]
 
 [project.scripts]

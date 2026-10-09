@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
 from .errors import ManifestError
@@ -183,3 +184,179 @@ def analyze_trajectory_drift(
         fields = sorted({key for row in summary for key in row})
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(summary)
     atomic_json(destination / "metadata.json", {"interpretation": "Observed adjacent-checkpoint association only; no causal or prospective forecasting claim.", "state_method": state_method, "dimensions": dimensions, "n_measured_nodes": len(nodes), "excluded_unmeasured_manifest_nodes": sorted(set(manifest_nodes) - set(nodes)), "n_edges": len(edges), "n_edge_outcome_rows": len(edge_rows)})
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write a rectangular CSV, including the useful empty-result case."""
+    fields = sorted({key for row in rows for key in row})
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if fields:
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+def build_state_score_atlas(
+    observations: str | Path,
+    anchors_path: str | Path,
+    nodes_path: str | Path,
+    wild_nodes_path: str | Path,
+    outcomes_path: str | Path,
+    output_dir: str | Path,
+    edges_path: str | Path | None = None,
+    dimensions: int = 4,
+    clusters: int = 4,
+) -> None:
+    """Create a descriptive, all-model map from anchor state to benchmark score.
+
+    This command is deliberately *not* a held-out predictive evaluation. It
+    fits one PCA to every measured assistant model so its axes can be plotted
+    and interpreted in a common coordinate system. Predictive claims must
+    continue to use the fold-refit states from ``run-predictor``.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # pragma: no cover - environment diagnostic
+        raise ManifestError("build-state-score-atlas requires matplotlib; install persona-audit[analysis]") from exc
+
+    manifest = load_nodes(nodes_path) + load_wild_nodes(wild_nodes_path)
+    manifest_by_id = {node.node_id: node for node in manifest}
+    expected_anchors = [anchor.anchor_id for anchor in load_anchors(anchors_path)]
+    # A v5 run measures only assistant endpoints. Derive the admissible panel
+    # from complete anchor rows rather than silently demanding raw-base states.
+    seen: dict[str, set[str]] = defaultdict(set)
+    for row in read_jsonl(observations):
+        node = str(row["node_id"])
+        if node in manifest_by_id:
+            seen[node].add(str(row["anchor_id"]))
+    nodes = [node.node_id for node in manifest if seen.get(node.node_id) == set(expected_anchors)]
+    if len(nodes) <= dimensions:
+        raise ManifestError("Atlas needs more complete measured models than state dimensions")
+    if not 1 <= clusters <= len(nodes):
+        raise ManifestError("clusters must be between 1 and the number of measured models")
+
+    _, margins = _load_observation_matrix(observations, nodes, expected_anchors, "behavior_logit_margin")
+    scaler = StandardScaler().fit(margins)
+    pca = PCA(n_components=dimensions, random_state=0).fit(scaler.transform(margins))
+    states = pca.transform(scaler.transform(margins))
+
+    outcome_rows = [
+        row for row in read_jsonl(outcomes_path)
+        if row.get("split") == "evaluation" and str(row.get("node_id")) in set(nodes)
+    ]
+    families = sorted({str(row["family"]) for row in outcome_rows})
+    if not families:
+        raise ManifestError("Atlas needs evaluation outcomes for at least one measured model")
+    rates: dict[tuple[str, str], float] = {}
+    for family in families:
+        for node in nodes:
+            values = [float(row["outcome"]) for row in outcome_rows if row["family"] == family and row["node_id"] == node]
+            if values:
+                rates[(node, family)] = float(np.mean(values))
+    complete_nodes = [node for node in nodes if all((node, family) in rates for family in families)]
+    if len(complete_nodes) != len(nodes):
+        missing = sorted(set(nodes) - set(complete_nodes))
+        raise ManifestError(f"Atlas requires complete evaluation outcomes; missing={missing}")
+    index = {node: position for position, node in enumerate(nodes)}
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(destination / "descriptive_pca_model.npz", mean=scaler.mean_, scale=scaler.scale_, components=pca.components_, anchors=np.asarray(expected_anchors))
+
+    assignment = KMeans(n_clusters=clusters, random_state=0, n_init=50).fit_predict(StandardScaler().fit_transform(states))
+    score_rows: list[dict[str, Any]] = []
+    for node in nodes:
+        spec = manifest_by_id[node]
+        position = index[node]
+        score_rows.append({
+            "node_id": node, "repo_id": spec.repo_id, "phase": spec.phase,
+            "cluster": int(assignment[position]),
+            **{f"z_{coordinate:02d}": float(states[position, coordinate]) for coordinate in range(dimensions)},
+            **{f"score_{family}": rates[(node, family)] for family in families},
+        })
+    _write_csv(destination / "model_scores_and_states.csv", score_rows)
+    with (destination / "descriptive_states.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle); writer.writerow(["node_id", *[f"z_{i:02d}" for i in range(dimensions)]])
+        writer.writerows([[node, *states[index[node]]] for node in nodes])
+
+    association_rows: list[dict[str, Any]] = []
+    for family in families:
+        scores = np.asarray([rates[(node, family)] for node in nodes])
+        for coordinate in range(dimensions):
+            values = states[:, coordinate]
+            association_rows.append({
+                "family": family, "coordinate": coordinate, "n_models": len(nodes),
+                "pearson": _pearson(values, scores), "spearman": _spearman(values, scores),
+            })
+    _write_csv(destination / "coordinate_score_associations.csv", association_rows)
+    cluster_rows: list[dict[str, Any]] = []
+    for cluster in range(clusters):
+        members = np.flatnonzero(assignment == cluster)
+        cluster_rows.append({
+            "cluster": cluster, "n_models": int(len(members)),
+            **{f"mean_z_{i:02d}": float(states[members, i].mean()) for i in range(dimensions)},
+            **{f"mean_score_{family}": float(np.mean([rates[(nodes[i], family)] for i in members])) for family in families},
+        })
+    _write_csv(destination / "cluster_profiles.csv", cluster_rows)
+
+    # 1. One state map per target family. Axes are global descriptive PCA axes.
+    for family in families:
+        values = np.asarray([rates[(node, family)] for node in nodes])
+        fig, axis = plt.subplots(figsize=(8, 6), constrained_layout=True)
+        points = axis.scatter(states[:, 0], states[:, 1], c=values, cmap="viridis", s=55, edgecolors="black", linewidths=.35)
+        fig.colorbar(points, ax=axis, label=f"Observed {family} evaluation rate")
+        axis.set(xlabel="Descriptive anchor PC1", ylabel="Descriptive anchor PC2", title=f"Anchor state vs observed {family} score")
+        fig.savefig(destination / f"state_map_{family}.png", dpi=220); plt.close(fig)
+
+    # 2. Coordinate-score diagnostic grid. A straight fitted line is a visual
+    # aid only; Pearson and Spearman values are written to the CSV above.
+    fig, axes = plt.subplots(dimensions, len(families), figsize=(4.2 * len(families), 3.2 * dimensions), squeeze=False, constrained_layout=True)
+    for coordinate in range(dimensions):
+        for family_index, family in enumerate(families):
+            axis = axes[coordinate, family_index]
+            x, y = states[:, coordinate], np.asarray([rates[(node, family)] for node in nodes])
+            axis.scatter(x, y, s=26, alpha=.8)
+            if np.std(x) > 1e-12:
+                slope, intercept = np.polyfit(x, y, 1)
+                grid = np.linspace(x.min(), x.max(), 100)
+                axis.plot(grid, slope * grid + intercept, color="black", linewidth=1)
+            corr = _spearman(x, y)
+            axis.set(title=f"{family}: z{coordinate} (rho={corr:.2f})", xlabel=f"z_{coordinate:02d}", ylabel="Observed evaluation rate")
+    fig.savefig(destination / "coordinate_score_plots.png", dpi=220); plt.close(fig)
+
+    # 3. Explicitly observed checkpoint trajectories. No arrow is drawn when
+    # either endpoint lacks a standardized state (e.g. a raw base checkpoint).
+    edges: list[dict[str, str]] = []
+    if edges_path:
+        with Path(edges_path).open(encoding="utf-8", newline="") as handle:
+            edges = [row for row in csv.DictReader(handle, delimiter="\t") if row["parent_id"] in index and row["child_id"] in index]
+    for family in families:
+        values = np.asarray([rates[(node, family)] for node in nodes])
+        fig, axis = plt.subplots(figsize=(8, 6), constrained_layout=True)
+        points = axis.scatter(states[:, 0], states[:, 1], c=values, cmap="viridis", s=35, zorder=2)
+        for edge in edges:
+            start, end = states[index[edge["parent_id"]], :2], states[index[edge["child_id"]], :2]
+            axis.annotate("", xy=end, xytext=start, arrowprops={"arrowstyle": "->", "color": "#444444", "alpha": .45, "lw": 1}, zorder=1)
+        fig.colorbar(points, ax=axis, label=f"Observed {family} evaluation rate")
+        axis.set(xlabel="Descriptive anchor PC1", ylabel="Descriptive anchor PC2", title=f"Observed checkpoint paths and {family} score")
+        fig.savefig(destination / f"trajectory_{family}.png", dpi=220); plt.close(fig)
+
+    # 4. Cluster-level behavioral profiles.
+    profile = np.asarray([[row[f"mean_score_{family}"] for family in families] for row in cluster_rows])
+    fig, axis = plt.subplots(figsize=(max(7, 1.8 * len(families)), max(3.5, 1.1 * clusters)), constrained_layout=True)
+    image = axis.imshow(profile, cmap="viridis", vmin=0, vmax=1, aspect="auto")
+    axis.set(xticks=range(len(families)), xticklabels=families, yticks=range(clusters), yticklabels=[f"Cluster {i} (n={cluster_rows[i]['n_models']})" for i in range(clusters)], title="Observed behavioral profiles of descriptive state clusters")
+    for row in range(clusters):
+        for column in range(len(families)):
+            axis.text(column, row, f"{profile[row, column]:.2f}", ha="center", va="center", color="white" if profile[row, column] < .55 else "black")
+    fig.colorbar(image, ax=axis, label="Mean observed evaluation rate")
+    fig.savefig(destination / "cluster_profiles.png", dpi=220); plt.close(fig)
+
+    atomic_json(destination / "metadata.json", {
+        "design": "Descriptive all-model atlas only. A single PCA is intentionally fit on all 70 measured models for common-coordinate visualization; these coordinates must not be used as held-out predictive evidence.",
+        "n_models": len(nodes), "n_anchors": len(expected_anchors), "dimensions": dimensions, "clusters": clusters,
+        "families": families, "n_trajectory_edges_drawn": len(edges),
+        "pca_explained_variance": [float(value) for value in pca.explained_variance_ratio_],
+        "input_sha256": {"observations": file_sha256(observations), "anchors": file_sha256(anchors_path), "outcomes": file_sha256(outcomes_path), "nodes": file_sha256(nodes_path), "wild_nodes": file_sha256(wild_nodes_path)},
+    })
