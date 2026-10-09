@@ -20,12 +20,13 @@ run_one () {
   persona-audit audit-predictor --predictions "$out/predictions.jsonl" --state-geometry "$out/state_geometry.jsonl" --output-dir "$out/audit" --bootstrap-replicates 2000
 }
 
-# PCA is the preregistered baseline. Soft IRT is the psychometric alternative.
-# LOMO is the main unseen-model test; LOLO is the correlated-lineage stress
-# test, not a model-selection criterion.
-run_one native_leave_one_model_out pca contextual_lomo_pca_d4
-run_one native_leave_one_model_out soft_irt contextual_lomo_soft_irt_d4
-run_one native_leave_one_lineage_out pca contextual_lolo_pca_d4
-run_one native_leave_one_lineage_out soft_irt contextual_lolo_soft_irt_d4
+# The representation sweep selected these two candidates on exploratory LOMO:
+# PCA d8 (strongest broad row-level result) and factor d4 (parsimonious state
+# with the clearest incremental Do-Not-Answer signal beyond metadata).  LOLO
+# is their correlated-lineage confirmation, not a model-selection criterion.
+run_one native_leave_one_model_out pca contextual_lomo_pca_d8
+run_one native_leave_one_model_out factor contextual_lomo_factor_d4
+run_one native_leave_one_lineage_out pca contextual_lolo_pca_d8
+run_one native_leave_one_lineage_out factor contextual_lolo_factor_d4
 persona-audit report-predictor --run-root "$root" --output "$root/representation_report.csv"
 echo "Completed contextual unseen-model decoder tests: $root"

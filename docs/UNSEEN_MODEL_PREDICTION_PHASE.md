@@ -43,6 +43,10 @@ This is a practical contextual-MIRT-style decoder: it distinguishes a general
 prompt effect, a model-state effect, and a low-rank state-by-prompt effect.
 The frozen encoder sees neither benchmark outcomes nor model IDs.
 
+The contextual decoder candidates are selected after the representation sweep
+on exploratory LOMO: PCA d8 and factor d4. Their leave-one-lineage-out runs
+are confirmation analyses and are not used for a second round of selection.
+
 ## Interpretation rules
 
 - Report model-level rate prediction and within-model prompt discrimination
