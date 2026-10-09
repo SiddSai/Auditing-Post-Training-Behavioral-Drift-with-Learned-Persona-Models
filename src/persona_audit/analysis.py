@@ -128,7 +128,20 @@ def analyze_trajectory_drift(
     Its audit value is that anchors can be much cheaper than the full target
     battery, so a next stage can test prospective forecasts separately.
     """
-    nodes = [node.node_id for node in load_nodes(nodes_path)]
+    manifest_nodes = [node.node_id for node in load_nodes(nodes_path)]
+    # The standardized v5 instrument deliberately measures assistant models
+    # only: raw base checkpoints have no valid assistant answer boundary. Do
+    # not demand invented base states merely because the official manifest also
+    # records them. Keep a node only when its complete frozen anchor row exists.
+    expected_anchors = {anchor.anchor_id for anchor in load_anchors(anchors)}
+    manifest_set = set(manifest_nodes)
+    observed: dict[str, set[str]] = defaultdict(set)
+    for row in read_jsonl(observations):
+        if row["node_id"] in manifest_set:
+            observed[str(row["node_id"])].add(str(row["anchor_id"]))
+    nodes = [node for node in manifest_nodes if observed.get(node) == expected_anchors]
+    if len(nodes) < 2:
+        raise ManifestError("Fewer than two official models have complete anchor rows")
     with Path(edges_path).open(encoding="utf-8", newline="") as handle:
         edges = [row for row in csv.DictReader(handle, delimiter="\t") if row["parent_id"] in nodes and row["child_id"] in nodes]
     if not edges:
@@ -169,4 +182,4 @@ def analyze_trajectory_drift(
     with (destination / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         fields = sorted({key for row in summary for key in row})
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(summary)
-    atomic_json(destination / "metadata.json", {"interpretation": "Observed adjacent-checkpoint association only; no causal or prospective forecasting claim.", "state_method": state_method, "dimensions": dimensions, "n_edges": len(edges), "n_edge_outcome_rows": len(edge_rows)})
+    atomic_json(destination / "metadata.json", {"interpretation": "Observed adjacent-checkpoint association only; no causal or prospective forecasting claim.", "state_method": state_method, "dimensions": dimensions, "n_measured_nodes": len(nodes), "excluded_unmeasured_manifest_nodes": sorted(set(manifest_nodes) - set(nodes)), "n_edges": len(edges), "n_edge_outcome_rows": len(edge_rows)})
